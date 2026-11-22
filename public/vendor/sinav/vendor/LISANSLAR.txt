@@ -1,0 +1,6 @@
+﻿Bu klasördeki üçüncü taraf kütüphaneler (hepsi açık kaynak):
+- pdfjs/            Mozilla pdf.js 6.5.438 — Apache License 2.0 (pdfjs/LICENSE)
+- pdf-lib.min.js    pdf-lib 1.17.1 — MIT (LICENSE-pdf-lib.md)
+- fontkit.umd.min.js @pdf-lib/fontkit — MIT
+- qrcode.min.js     node-qrcode — MIT (LICENSE-qrcode.txt)
+- pdfjs/standard_fonts/LiberationSans-*.ttf — SIL Open Font License (pdfjs/standard_fonts/LICENSE_LIBERATION)
