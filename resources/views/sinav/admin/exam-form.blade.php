@@ -37,7 +37,7 @@
         <div class="field"><label for="f-gname">Grup / şube</label>
           <input id="f-gname" name="group_name" class="input" maxlength="60" value="{{ old('group_name', $list['group']) }}"></div>
         <div class="field"><label for="f-pin">Öğrenci PIN'i</label>
-          <input id="f-pin" name="pin" class="input mono" inputmode="numeric" maxlength="8" autocomplete="off" value="{{ old('pin') }}" placeholder="{{ $listGroup && $listGroup->hasPin() ? 'Mevcut PIN geçerli' : '4-8 rakam' }}">
+          <input id="f-pin" name="pin" class="input mono" inputmode="numeric" maxlength="8" autocomplete="off" value="{{ old('pin') }}" placeholder="{{ $listGroup && $listGroup->hasPin() ? 'Mevcut PIN geçerli' : '6-8 rakam' }}">
           <div class="hint">{{ $listGroup && $listGroup->hasPin() ? 'Bu grubun PIN\'i var; değiştirmek istemiyorsanız boş bırakın.' : 'Öğrenciler numarası ve bu PIN\'le girer. Siz belirleyin; 1234 gibi kolay PIN kabul edilmez.' }}</div></div>
       </div>
     </fieldset>
@@ -75,7 +75,7 @@
         @unless ($g->hasPin())
           <div class="field" style="margin:8px 0 0;max-width:260px">
             <label for="pin-{{ $g->id }}">Öğrenci PIN'i (bu grubun PIN'i yok)</label>
-            <input id="pin-{{ $g->id }}" name="groups[{{ $g->id }}][pin]" class="input mono" inputmode="numeric" maxlength="8" autocomplete="off" value="{{ old('groups.' . $g->id . '.pin') }}" placeholder="4-8 rakam">
+            <input id="pin-{{ $g->id }}" name="groups[{{ $g->id }}][pin]" class="input mono" inputmode="numeric" maxlength="8" autocomplete="off" value="{{ old('groups.' . $g->id . '.pin') }}" placeholder="6-8 rakam">
           </div>
         @endunless
         <div data-custom-times @if (!$row['custom']) class="hidden" @endif style="margin-top:8px">

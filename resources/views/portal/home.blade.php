@@ -1,36 +1,86 @@
 @extends('layouts.app')
-@section('title', 'Başvurum')
+@section('title', \App\Models\Student::PORTAL_MODES[$mode])
 @section('content')
+@php
+    $st = $student->application_status;
+    $types = \App\Models\ExemptionApplication::TYPES;
+    $typeHelp = [
+        'normal' => 'Daha önce aldığınız derslerden muafiyet istersiniz.',
+        'yaz_okulu' => 'Başka üniversitenin yaz okulunda alacağınız derslerin AÜ karşılığını önceden onaylatırsınız (en fazla '.(float) config('intibak.summer_school_max_ects').' AKTS).',
+        'hazirlik' => 'Yeni kayıtlı öğrenci, geçerli bir dil sınavı puanıyla hazırlık sınıfından muaf olmak ister.',
+    ];
+@endphp
 <div class="page-head">
-    <div><h1>Merhaba, {{ $student->first_name }}</h1><div class="sub">{{ $currentTerm ?? '' }} · {{ $student->program?->full_name }} · muafiyet ve intibak başvurusu</div></div>
+    <div><h1>{{ \App\Models\Student::PORTAL_MODES[$mode] }}</h1><div class="sub">Merhaba, {{ $student->first_name }} · {{ $currentTerm ?? '' }} · {{ $student->program?->full_name }}</div></div>
 </div>
-@include('portal._status')
+@error('type')<div class="alert bad" style="white-space:normal">{{ $message }}</div>@enderror
 
-<div class="card">
-    <div class="card-head"><div><h2>Başvurumun aşamaları</h2><div class="sub">Başvurunuzun nerede olduğunu buradan izleyin</div></div></div>
-    @if ($reopened)<div class="alert warn" style="margin-bottom:12px">Komisyon başvurunuzu düzeltme için size geri açtı. Gerekli değişiklikleri yapıp yeniden gönderin.</div>@endif
-    <ol class="st-steps">
-        @foreach ($stages as $i => $stage)
-            <li class="st-{{ $stage['state'] }}">
-                <span class="st-dot">{{ $stage['state'] === 'done' ? '✓' : $i + 1 }}</span>
-                <div>
-                    <b>{{ $stage['label'] }}</b>
-                    @if ($stage['date'] && $stage['state'] !== 'todo')<span class="small muted"> · {{ $stage['date']->format('d.m.Y') }}</span>@endif
-                    @if ($stage['state'] === 'current')<div class="small">{{ $stage['text'] }}</div>@endif
-                </div>
-            </li>
-        @endforeach
-    </ol>
-</div>
+@if ($mode === 'yeni')
+    @if ($st === 'sonuclandi')
+        <div class="alert ok" style="white-space:normal">Son başvurunuz sonuçlandı. Kararı görmek ya da itiraz etmek için <a href="{{ route('portal.applications.show', $application) }}">Muafiyet Başvurularım</a> sayfasını açın.</div>
+    @endif
+    <div class="card" id="basvuru-turu">
+        <div class="card-head"><div><h2>Yeni başvuru</h2><div class="sub">Başvuru türünü seçip başlayın. Başvurunuzu istediğiniz zaman kaydedip sonra tamamlayabilirsiniz.</div></div></div>
+        <form method="POST" action="{{ route('portal.applications.start') }}">
+            @csrf
+            @foreach ($types as $k => $v)
+                <label class="type-opt" style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:9px;margin-bottom:8px;font-weight:400;cursor:pointer">
+                    <input type="radio" name="type" value="{{ $k }}" @checked($loop->first) @disabled(! $windows[$k]['open']) style="margin-top:3px">
+                    <span><b>{{ $v }}</b>@unless ($windows[$k]['open']) <span class="badge warn">alım kapalı</span>@endunless
+                        <span class="small muted" style="display:block">{{ $typeHelp[$k] }} {{ $windows[$k]['open'] ? '' : $windows[$k]['message'] }}</span></span>
+                </label>
+            @endforeach
+            <p class="row" style="margin:12px 0 0"><button><x-icon name="plus" :size="14" /> Başvuruya başla</button>
+                @if ($st === 'sonuclandi')<span class="small muted">Önceki başvurularda talep ettiğiniz dersler (kabul ya da ret) yeniden istenemez.</span>@endif</p>
+        </form>
+    </div>
+@else
+    @include('portal._status')
+    @if ($application->return_note && $st === 'taslak')
+        <div class="alert warn" style="white-space:normal"><b>Komisyon başvurunuzu düzeltmeniz için geri açtı{{ $application->returned_at ? ' ('.$application->returned_at->format('d.m.Y').')' : '' }}.</b><br>Komisyonun notu: {{ $application->return_note }}</div>
+    @endif
 
+    <div class="card">
+        <div class="card-head"><div><h2>{{ $application->type_label }}</h2><div class="sub">Başvurumun aşamaları · açılış {{ $application->created_at->format('d.m.Y') }}</div></div>
+            @if ($st === 'taslak')<a class="btn" href="{{ route('portal.courses') }}"><x-icon name="edit" :size="14" /> Başvuruyu düzenle</a>@endif</div>
+        @if ($reopened && ! $application->return_note)<div class="alert warn" style="margin-bottom:12px">Komisyon başvurunuzu düzeltme için size geri açtı. Gerekli değişiklikleri yapıp yeniden gönderin.</div>@endif
+        <ol class="st-steps">
+            @foreach ($stages as $i => $stage)
+                <li class="st-{{ $stage['state'] }}">
+                    <span class="st-dot">{{ $stage['state'] === 'done' ? '✓' : $i + 1 }}</span>
+                    <div>
+                        <b>{{ $stage['label'] }}</b>
+                        @if ($stage['date'] && $stage['state'] !== 'todo')<span class="small muted"> · {{ $stage['date']->format('d.m.Y') }}</span>@endif
+                        @if ($stage['state'] === 'current')<div class="small">{{ $stage['text'] }}</div>@endif
+                    </div>
+                </li>
+            @endforeach
+        </ol>
+        @if ($st === 'taslak')
+            <form method="POST" action="{{ route('portal.applications.start') }}" class="row" id="basvuru-turu" style="margin-top:12px">
+                @csrf
+                <label for="app-type" class="small">Başvuru türü</label>
+                <select id="app-type" name="type">@foreach ($types as $k => $v)<option value="{{ $k }}" @selected($application->type === $k)>{{ $v }}</option>@endforeach</select>
+                <button class="light">Türü değiştir</button>
+            </form>
+            <p class="small muted" style="margin-bottom:0">{{ $windows[$application->type]['message'] }}</p>
+        @endif
+    </div>
+@endif
+
+@if ($mode === 'duzenle')
+@unless ($application->isPrep())
 <div class="grid grid-5">
     <div class="stat"><span class="stat-icon sky"><x-icon name="book" :size="18" /></span><div>Girdiğim ders<b>{{ $student->transcript->count() }}</b></div></div>
     <div class="stat"><span class="stat-icon violet"><x-icon name="link" :size="18" /></span><div>Eşleştirme<b>{{ $student->transcript->whereNotNull('requested_course_id')->count() }}</b></div></div>
     <div class="stat"><span class="stat-icon green"><x-icon name="file" :size="18" /></span><div>Belge<b>{{ $student->documents->count() }}</b></div></div>
     <div class="stat"><span class="stat-icon"><x-icon name="clipboard" :size="18" /></span><div>Eksik adım<b>{{ collect($checklist)->where('required', true)->where('done', false)->count() }}</b></div></div>
 </div>
+@endunless
+@endif
 
-<div class="grid grid-2">
+<div class="grid {{ $mode === 'duzenle' ? 'grid-2' : '' }}">
+    @if ($mode === 'duzenle')
     <div class="card">
         <div class="card-head"><div><h2>Yapılacaklar</h2><div class="sub">Tüm zorunlu adımlar tamamlanınca başvurunuzu gönderebilirsiniz</div></div></div>
         <ul style="list-style:none;padding:0;margin:0">
@@ -39,10 +89,12 @@
             @endforeach
         </ul>
         <p class="row" style="margin-top:12px">
-            <a class="btn" href="{{ route('portal.courses') }}"><x-icon name="book" :size="14" /> Muafiyet başvuruma git</a>
+            <a class="btn" href="{{ route('portal.courses') }}"><x-icon name="edit" :size="14" /> Başvuruyu düzenle</a>
+            <a class="btn light" href="{{ route('portal.petition') }}"><x-icon name="file" :size="14" /> Dilekçemi hazırla</a>
         </p>
         <p class="small muted">Muafiyet için dilekçe, not döküm belgesi ve onaylı ders içerikleri gerekir (Uygulama Esasları Md. 5/2). Başvurular akademik takvimdeki ders kayıt tarihleri içinde yapılır (Md. 5/1).</p>
     </div>
+    @endif
 
     <form method="POST" action="{{ route('portal.profile') }}" class="card">
         @csrf @method('PUT')
@@ -73,43 +125,15 @@
     </form>
 </div>
 
-@if (! $decided && $student->transcript->whereNotNull('requested_course_id')->isNotEmpty())
+@if ($mode !== 'yeni' && $student->transcript->whereNotNull('requested_course_id')->isNotEmpty())
     <div class="card table-wrap">
-        <h2>Muafiyet taleplerim <span class="small muted">({{ $student->application_status === 'taslak' ? 'henüz gönderilmedi' : 'komisyon kararı bekleniyor' }})</span></h2>
+        <h2>Muafiyet taleplerim <span class="small muted">({{ $st === 'taslak' ? 'henüz gönderilmedi' : 'komisyon kararı bekleniyor' }})</span></h2>
         <table>
             <tr><th>Aldığım ders</th><th>Muaf olmak istediğim AÜ dersi</th><th class="num">AKTS</th><th>Durum</th></tr>
             @foreach ($student->transcript->whereNotNull('requested_course_id')->sortBy(fn ($c) => $c->requestedCourse?->semester) as $c)
-                <tr><td>{{ $c->label }}</td><td>{{ $c->requestedCourse?->label }}</td><td class="num">{{ (float) $c->ects }}</td><td><span class="badge">{{ $student->application_status === 'taslak' ? 'taslak' : 'bekliyor' }}</span></td></tr>
+                <tr><td>{{ $c->label }}</td><td>{{ $c->requestedCourse?->label }}</td><td class="num">{{ (float) $c->ects }}</td><td><span class="badge">{{ $st === 'taslak' ? 'taslak' : 'bekliyor' }}</span></td></tr>
             @endforeach
         </table>
-    </div>
-@endif
-
-@if ($decided)
-    <div class="card">
-        <h2>Muafiyet ve intibak sonucu</h2>
-        <p>Muaf olunan toplam <b>{{ (float) $decided->exempt_ects }} AKTS</b> · intibak edildiğiniz yarıyıl: <b>{{ $decided->effective_semester }}. yarıyıl</b>
-            @if ($decided->decision_no)· Yönetim kurulu kararı: {{ $decided->decision_date?->format('d.m.Y') }} / {{ $decided->decision_no }}@endif</p>
-        <table>
-            <tr><th>Aldığınız ders(ler)</th><th>Muaf olduğunuz AÜ dersi</th><th class="num">Yarıyıl</th><th class="num">AKTS</th><th>Harf notu</th></tr>
-            @foreach ($decided->acceptedItems->sortBy(fn ($i) => $i->course->semester) as $item)
-                <tr>
-                    <td>{{ $item->sources->map(fn ($s) => $s->label)->implode(' + ') ?: (\App\Models\ExemptionItem::RULES[$item->rule] ?? '') }}</td>
-                    <td>{{ $item->course->label }}</td>
-                    <td class="num">{{ $item->course->semester }}</td>
-                    <td class="num">{{ (float) $item->course->ects }}</td>
-                    <td><b>{{ $item->letter }}</b></td>
-                </tr>
-            @endforeach
-        </table>
-        @php
-            $rejected = $decided->items->where('status', 'ret');
-        @endphp
-        @if ($rejected->isNotEmpty())
-            <h3 style="margin-top:14px">Kabul edilmeyen talepler</h3>
-            <ul>@foreach ($rejected as $item)<li>{{ $item->course?->label }}</li>@endforeach</ul>
-        @endif
-        <p class="small muted">İntibak edilen öğrenci önce alt yarıyıllardan muaf olmadığı derslere kayıt yaptırır (Md. 7/2). Karara itiraz için bildirimden itibaren beş iş günü içinde Dekanlığa başvurabilirsiniz (Md. 5/9).</p>
     </div>
 @endif
 @endsection

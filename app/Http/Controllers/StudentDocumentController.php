@@ -29,6 +29,7 @@ class StudentDocumentController extends Controller
             'type' => ['required', Rule::in(array_keys(StudentDocument::TYPES))],
             'files' => ['required', 'array', 'max:10'],
             'files.*' => ['file', 'mimes:pdf,jpg,jpeg,png,doc,docx,xls,xlsx', 'max:15360'],
+            'institution' => ['nullable', 'string', 'max:200'],
         ]);
         foreach ($request->file('files') as $upload) {
             $path = $upload->store('belgeler/'.$student->id, 'local');
@@ -39,6 +40,7 @@ class StudentDocumentController extends Controller
                 'size' => $upload->getSize(),
                 'mime' => $upload->getMimeType(),
                 'uploaded_by' => $user->id,
+                'institution' => $data['institution'] ?? null,
             ]);
         }
 
@@ -70,6 +72,6 @@ class StudentDocumentController extends Controller
     private function authorizeAccess(Request $request, StudentDocument $document): void
     {
         $user = $request->user();
-        abort_unless($user->isAdmin() || ($user->isStudent() && $user->student_id === $document->student_id), 403);
+        abort_unless($user->isCommission() || ($user->isStudent() && $user->student_id === $document->student_id), 403);
     }
 }

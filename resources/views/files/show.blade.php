@@ -8,7 +8,8 @@
 <div class="page-head">
     <div>
         <h1>Değerlendirme #{{ $file->id }} — <a href="{{ route('students.show', $file->student) }}">{{ $file->student->full_name }}</a></h1>
-        <div class="sub">{{ $file->curriculum->label }} · {{ \App\Models\Student::ADMISSION_TYPES[$file->student->admission_type] ?? '' }} · önceki kurum: {{ $file->student->previous_institution ?: '—' }}</div>
+        <div class="sub">{{ $file->curriculum->label }} · {{ \App\Models\Student::ADMISSION_TYPES[$file->student->admission_type] ?? '' }} · önceki kurum: {{ $file->student->previous_institution ?: '—' }}
+            @if ($file->application) · <span class="badge {{ $file->application->isSummer() ? 'warn' : '' }}">{{ $file->application->type_label }}</span>@endif</div>
     </div>
     <div class="row no-print">
         <a class="btn light" href="{{ route('files.report', $file) }}" target="_blank"><x-icon name="print" :size="14" /> Komisyon raporu</a>
@@ -24,6 +25,19 @@
     <div class="stat"><span class="stat-icon violet"><x-icon name="calendar" :size="18" /></span><div>İntibak yarıyılı<b>{{ $file->effective_semester }}.</b></div></div>
 </div>
 
+@if ($file->application?->hasOpenObjection())
+    <div class="alert warn" style="white-space:normal"><b>Öğrenci bu karara itiraz etti ({{ $file->application->objected_at->format('d.m.Y H:i') }}).</b> <a href="{{ route('applications.show', $file->application) }}#itiraz">İtirazı okuyup cevaplayın.</a></div>
+@endif
+@if ($trToEn)
+    <div class="alert warn" style="white-space:normal">Öğrenci <b>Türkçe bir programdan İngilizce programa</b> başvuruyor. İngilizce programın alan derslerinden muafiyet verilemez; temel dersler kabul edilebilir. Reddettiğiniz satırlarda gerekçe olarak “Türkçe programdan İngilizce programın alan derslerinden…” seçeneğini kullanın.</div>
+@endif
+@if ($languageNote)
+    <div class="alert info" style="white-space:normal">{{ $languageNote }}</div>
+@endif
+@if ($file->application?->isSummer())
+    <div class="alert info" style="white-space:normal">Yaz okulu ön onayı: öğrenci bu dersleri henüz almadı. Talep edilen AÜ derslerinin toplamı en fazla {{ (float) config('intibak.summer_school_max_ects') }} AKTS olabilir.</div>
+@endif
+
 <div class="grid grid-2">
     <div class="card">
         <div class="card-head"><div><h2>Komisyon işlemleri</h2><div class="sub">⌊{{ (float) $file->exempt_ects }} ÷ {{ config('intibak.ects_per_semester') }}⌋ + 1 = {{ $file->placed_semester }}. yarıyıl (Md. 7/1)</div></div></div>
@@ -32,7 +46,14 @@
             <form method="POST" action="{{ route('files.bulk', $file) }}" onsubmit="return confirm('Bekleyen tüm talepler reddedilsin mi?')">@csrf<input type="hidden" name="action" value="reject_pending"><button class="danger">Bekleyenleri reddet</button></form>
             <form method="POST" action="{{ route('files.generate', $file) }}" onsubmit="return confirm('Öğrencinin güncel eşleştirmeleri yeniden okunacak; komisyonun kabul/ret verdiği satırlar korunur. Devam?')">@csrf<button class="light"><x-icon name="refresh" :size="14" /> Öğrenci taleplerini yeniden oku</button></form>
         </div>
-        <p class="small muted">Komisyon öğrenci adına ders ya da eşleştirme girmez. Eksik ya da hatalı talep için öğrenci sayfasından başvuruyu “Hazırlanıyor” yapıp öğrenciye geri gönderin.</p>
+        <form method="POST" action="{{ route('files.assign', $file) }}" class="row" style="margin:10px 0">
+            @csrf @method('PUT')
+            <label for="assignee" class="small" style="margin:0">Dosyayı inceleyen</label>
+            <select id="assignee" name="assigned_to"><option value="">— atanmadı —</option>@foreach ($commission as $member)<option value="{{ $member->id }}" @selected($file->assigned_to === $member->id)>{{ $member->display_name }}</option>@endforeach</select>
+            <button class="light small">Ata</button>
+            @if ($file->assigned_to !== auth()->id())<button class="small" name="assigned_to" value="{{ auth()->id() }}">Bana ata</button>@endif
+        </form>
+        <p class="small muted">Komisyon öğrenci adına ders ya da eşleştirme girmez. Eksik ya da hatalı talep için @if ($file->application)<a href="{{ route('applications.show', $file->application) }}">başvuru sayfasından</a>@else başvuru sayfasından @endif başvuruyu “Hazırlanıyor” yapıp öğrenciye geri gönderin.</p>
         @if ($unusedSources->isNotEmpty())
             <details><summary>Öğrencinin eşleştirmediği başarılı dersler ({{ $unusedSources->count() }})</summary>
                 <ul class="small">@foreach ($unusedSources as $s)<li>{{ $s->label }} · {{ $s->credit ?? '–' }} kr / {{ $s->ects ?? '–' }} AKTS · {{ $s->grade_raw }}</li>@endforeach</ul>
@@ -40,8 +61,8 @@
         @endif
         <h3>Öğrencinin belgeleri</h3>
         <div class="row">
-            @forelse ($file->student->documents as $doc)
-                <a class="btn light small" href="{{ route('documents.download', $doc) }}"><x-icon name="download" :size="13" /> {{ \App\Models\StudentDocument::TYPES[$doc->type] ?? $doc->type }}</a>
+            @forelse ($documents as $doc)
+                <a class="btn light small" href="{{ route('documents.download', $doc) }}"><x-icon name="download" :size="13" /> {{ \App\Models\StudentDocument::TYPES[$doc->type] ?? $doc->type }}{{ $doc->institution ? ' — '.$doc->institution : '' }}</a>
             @empty
                 <span class="small muted">Belge yok.</span>
             @endforelse
@@ -52,7 +73,7 @@
         @csrf @method('PUT')
         <div class="card-head"><div><h2>Yönetim kurulu kararı</h2><div class="sub">Karar verilince kabul edilen eşleştirmeler havuza yazılır, öğrenci sonucu panelinde görür</div></div></div>
         <div class="form-grid">
-            <div><label>Durum</label><select name="status">@foreach (\App\Models\ExemptionFile::STATUSES as $k => $v)<option value="{{ $k }}" @selected($file->status === $k)>{{ $v }}</option>@endforeach</select></div>
+            <div><label>Durum</label><select name="status">@foreach (\App\Models\ExemptionFile::STATUSES as $k => $v)<option value="{{ $k }}" @selected($file->status === $k) @disabled($k === 'karar' && ! auth()->user()->isAdmin() && $file->status !== 'karar')>{{ $v }}{{ $k === 'karar' && ! auth()->user()->isAdmin() ? ' (başkan)' : '' }}</option>@endforeach</select></div>
             <div><label>Karar no</label><input name="decision_no" value="{{ $file->decision_no }}"></div>
             <div><label>Karar tarihi</label><input type="date" name="decision_date" value="{{ $file->decision_date?->format('Y-m-d') }}"></div>
             <div><label>Yarıyıl (komisyon belirlerse)</label><input type="number" name="placed_semester_override" min="1" max="8" value="{{ $file->placed_semester_override }}" placeholder="{{ $file->placed_semester }}"></div>
@@ -65,8 +86,9 @@
     </form>
 </div>
 
+<form method="POST" action="{{ route('files.decisions', $file) }}" id="decisions-form" class="no-print">@csrf @method('PUT')</form>
 <div class="card table-wrap">
-    <div class="card-head"><div><h2>Talepler ve değerlendirme</h2><div class="sub">Öğrencinin eşleştirmeleri öğretim planı sırasıyla; kontroller sistem tarafından eklenir, karar komisyonundur</div></div></div>
+    <div class="card-head"><div><h2>Talepler ve değerlendirme</h2><div class="sub">Öğrencinin eşleştirmeleri öğretim planı sırasıyla; kontroller sistem tarafından eklenir, karar komisyonundur. Kararları seçip en alttaki <b>Tüm kararları kaydet</b> düğmesine bir kez basın.</div></div></div>
     @foreach ($plan as $semester => $courses)
         @php($semItems = $courses->map(fn ($c) => $itemsByCourse->get($c->id))->filter())
         @continue($semItems->isEmpty())
@@ -91,7 +113,34 @@
     @endif
     @if ($file->items->isEmpty())
         <p class="muted">Öğrencinin eşleştirmesi yok.</p>
+    @else
+        <div class="dec-bar no-print">
+            <span class="small muted" data-dec-dirty hidden>Kaydedilmemiş değişiklik var.</span>
+            <button form="decisions-form"><x-icon name="check" :size="14" /> Tüm kararları kaydet</button>
+        </div>
     @endif
 </div>
+<script>
+(function () {
+    const form = document.getElementById('decisions-form');
+    let dirty = false;
+    const mark = () => { dirty = true; document.querySelectorAll('[data-dec-dirty]').forEach((e) => { e.hidden = false; }); };
+    document.querySelectorAll('[form="decisions-form"]').forEach((el) => {
+        el.addEventListener('change', mark);
+        el.addEventListener('input', mark);
+    });
+    document.querySelectorAll('[data-dec-status]').forEach((sel) => {
+        sel.addEventListener('change', () => {
+            const reason = sel.closest('td').querySelector('[data-dec-reason]');
+            reason.hidden = sel.value !== 'ret';
+            sel.closest('tr').className = 'st-' + sel.value;
+        });
+    });
+    form.addEventListener('submit', () => { dirty = false; });
+    window.addEventListener('beforeunload', (e) => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+})();
+</script>
+@if (auth()->user()->isAdmin())
 <form method="POST" action="{{ route('files.destroy', $file) }}" onsubmit="return confirm('Dosya silinsin mi?')" class="no-print">@csrf @method('DELETE')<button class="danger small">Dosyayı sil</button></form>
+@endif
 @endsection

@@ -217,7 +217,7 @@ class Exams
             if (trim((string) ($in['pin'] ?? '')) !== '') {
                 $pin = Terms::setGroupPin($group, (string) $in['pin']);
             } elseif (! $group->hasPin()) {
-                throw new UserError('Öğrencilerin sınavı görebilmesi için bir PIN belirleyin (4-8 rakam).');
+                throw new UserError('Öğrencilerin sınavı görebilmesi için bir PIN belirleyin (6-8 rakam).');
             }
 
             $schedule = self::scheduleFromForm(['common' => $in['common'] ?? [], 'groups' => [$group->id => ['on' => 1]]], collect([$group]));

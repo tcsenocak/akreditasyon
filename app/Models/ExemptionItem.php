@@ -24,6 +24,18 @@ class ExemptionItem extends Model
 
     public const STATUSES = ['oneri' => 'Öneri', 'kabul' => 'Kabul', 'ret' => 'Ret'];
 
+    /** Ret gerekçeleri; öğrenciye sonuçla birlikte gösterilir. */
+    public const REJECT_REASONS = [
+        'icerik' => 'Ders içerikleri yeterince örtüşmüyor',
+        'akts' => 'AKTS ve kredi yetersiz',
+        'basarisiz' => 'Ders başarısız ya da notu muafiyete esas alınamıyor',
+        'tr_en' => 'Türkçe programdan İngilizce programın alan derslerinden muafiyet istenemez',
+        'onceki' => 'Bu ders için daha önce başvuru yapılmış',
+        'yaz_akts' => 'Yaz okulu AKTS sınırı aşılıyor',
+        'belge' => 'Belge eksik veya onaysız',
+        'diger' => 'Diğer (komisyon notuna bakınız)',
+    ];
+
     protected function casts(): array
     {
         return ['ects_ok' => 'boolean', 'score' => 'float', 'exam_score' => 'float', 'content_score' => 'float'];
@@ -37,6 +49,11 @@ class ExemptionItem extends Model
     public function course(): BelongsTo
     {
         return $this->belongsTo(CurriculumCourse::class, 'curriculum_course_id');
+    }
+
+    public function decider(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'decided_by');
     }
 
     public function sources(): BelongsToMany

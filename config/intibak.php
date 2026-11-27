@@ -53,6 +53,15 @@ return [
     'yds_min_score' => 50,
     'professional_language_max_courses' => 2,
 
+    // Günlük yedeklerin klasörü (php artisan yedek:al); proje klasörünün dışında tutulur.
+    'backup_path' => env('BACKUP_PATH', dirname(base_path()).DIRECTORY_SEPARATOR.'intibak-yedekler'),
+
+    // İtiraz süresi: karardan sonra iş günü (Uygulama Esasları Md. 5/9)
+    'objection_business_days' => 5,
+
+    // Yaz okulunda alınabilecek en fazla AKTS; yaz okulu ön onay başvurusu bu sınırı aşamaz.
+    'summer_school_max_ects' => 20,
+
     // Md. 6/6: temel bilgisayar muafiyet sınavı geçme puanı
     'exam_pass_score' => 50,
 

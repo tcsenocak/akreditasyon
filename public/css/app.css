@@ -1,4 +1,4 @@
-/* Muafiyet ve İntibak — ATABAUM modül tasarım dili */
+/* Muafiyet ve İntibak — tasarım dili */
 :root {
   --bg: #f8fafc;
   --panel: #ffffff;
@@ -318,3 +318,23 @@ span.mx-chip { cursor: default; }
 .st-current .st-dot { background: var(--brand); color: #fff; }
 .st-todo { opacity: .65; }
 @media (max-width: 900px) { .st-steps { grid-template-columns: 1fr; } }
+
+/* Toplu karar kaydetme, önceki başvuruda istenen dersler, yaz okulu sınırı */
+.dec-bar { position: sticky; bottom: 0; display: flex; justify-content: flex-end; align-items: center; gap: 12px; padding: 12px 0 4px; background: linear-gradient(to bottom, rgba(255,255,255,0), #fff 30%); z-index: 2; }
+.dec-cell select, .dec-cell input { max-width: 100%; }
+.obs-row.mx-blocked td { color: var(--muted, #6b7280); background: #f8fafc; }
+.mx-was { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: #e2e8f0; color: #475569; font-size: 13px; }
+.mx-summer { margin-bottom: 10px; }
+
+/* Dilekçe ve toplu karar listesi (yazdırılabilir) */
+.petition { font-size: 14px; line-height: 1.6; }
+.petition-table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+.petition-table th, .petition-table td { border: 1px solid #cbd5e1; padding: 5px 7px; vertical-align: top; }
+.petition-sign { display: flex; justify-content: space-between; gap: 24px; margin-top: 28px; flex-wrap: wrap; }
+.board-student { break-inside: avoid; }
+@media print {
+    .petition { border: 0; box-shadow: none; padding: 0; font-size: 12px; }
+    .petition-table th, .petition-table td { border-color: #555; }
+}
+
+.nav-badge { margin-left: auto; min-width: 20px; padding: 1px 6px; border-radius: 10px; background: #f59e0b; color: #1f2937; font-size: 11px; font-weight: 700; text-align: center; }

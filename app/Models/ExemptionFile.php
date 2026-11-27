@@ -22,6 +22,16 @@ class ExemptionFile extends Model
         return $this->belongsTo(Student::class);
     }
 
+    public function application(): BelongsTo
+    {
+        return $this->belongsTo(ExemptionApplication::class, 'application_id');
+    }
+
+    public function assignee(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'assigned_to');
+    }
+
     public function curriculum(): BelongsTo
     {
         return $this->belongsTo(Curriculum::class);

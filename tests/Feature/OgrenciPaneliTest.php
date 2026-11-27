@@ -10,11 +10,13 @@ use App\Models\Student;
 use App\Models\StudentDocument;
 use App\Models\TranscriptCourse;
 use App\Models\User;
+use App\Notifications\BasvuruBildirimi;
 use App\Services\CatalogService;
 use App\Services\TextNormalizer;
 use App\Services\TranscriptTemplate;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Tests\TestCase;
@@ -68,24 +70,46 @@ class OgrenciPaneliTest extends TestCase
 
     public function test_komisyon_hesap_acar_ogrenci_ilk_giriste_parola_degistirir(): void
     {
+        config(['mail.default' => 'log']);
         $admin = User::factory()->create();
         $this->actingAs($admin)->post(route('students.store'), [
             'first_name' => 'Ali', 'last_name' => 'Kaya', 'program_id' => $this->program->id, 'account_email' => 'ali@example.com',
-        ])->assertRedirect()->assertSessionHas('account_password');
-        $temporary = session('account_password')['password'];
+        ])->assertRedirect()->assertSessionHas('account_link');
+        $link = session('account_link');
+        $this->assertFalse($link['sent'], 'E-posta sunucusu yokken bağlantı komisyona gösterilir');
         $student = Student::query()->where('first_name', 'Ali')->firstOrFail();
         $this->assertSame($this->curriculum->id, $student->curriculum_id);
+        // Yeni öğrencinin sayfasında başvuru listesi boş görünür
+        $this->get(route('students.show', $student))->assertOk()->assertSee('Öğrenci henüz başvuru göndermedi.')->assertSee('etkinleştirme bekleniyor');
         auth()->logout();
 
-        $this->post(route('login.attempt'), ['email' => 'ali@example.com', 'password' => $temporary])->assertRedirect(route('portal.home'));
-        $this->get(route('portal.home'))->assertRedirect(route('portal.password'));
-        $this->put(route('portal.password.update'), [
-            'current_password' => $temporary, 'password' => 'yeni-parola-123', 'password_confirmation' => 'yeni-parola-123',
-        ])->assertRedirect(route('portal.home'));
-        $this->get(route('portal.home'))->assertOk()->assertSee('Merhaba, Ali');
+        // Öğrenci bağlantıdan parolasını belirler; komisyon parola iletmez
+        $this->get(route('activation.show', 'gecersiz-belirtec'))->assertOk()->assertSee('geçersiz ya da süresi dolmuş');
+        $this->get($link['url'])->assertOk()->assertSee('ali@example.com');
+        $this->post($link['url'], ['password' => 'kisa', 'password_confirmation' => 'kisa'])->assertSessionHasErrors('password');
+        $this->post($link['url'], ['password' => 'yeni-parola-123', 'password_confirmation' => 'yeni-parola-123'])->assertRedirect(route('portal.home'));
+        $this->assertFalse($student->user()->first()->must_change_password);
+        $this->get($link['url'])->assertSee('geçersiz ya da süresi dolmuş');
+        $this->get(route('portal.home'))->assertRedirect(route('portal.kvkk'));
+        $this->post(route('portal.kvkk.accept'))->assertSessionHasErrors('okudum');
+        $this->post(route('portal.kvkk.accept'), ['okudum' => 1])->assertRedirect(route('portal.home'));
+        $this->get(route('portal.home'))->assertOk()->assertSee('Merhaba, Ali')->assertSee('Yeni Başvuru');
+        auth()->logout();
+        $this->post(route('login.attempt'), ['email' => 'ali@example.com', 'password' => 'yeni-parola-123'])->assertRedirect(route('portal.home'));
 
-        $this->actingAs($admin)->post(route('students.account.reset', $student))->assertSessionHas('account_password');
-        $this->assertTrue($student->user()->first()->must_change_password);
+        $this->actingAs($admin)->post(route('students.account.reset', $student))->assertSessionHas('account_link');
+        $this->assertNotNull($student->user()->first()->activation_token);
+    }
+
+    public function test_e_posta_sunucusu_varsa_etkinlestirme_baglantisi_ogrenciye_gider(): void
+    {
+        Notification::fake();
+        $this->actingAs(User::factory()->create())->post(route('students.store'), [
+            'first_name' => 'Elif', 'last_name' => 'Ak', 'program_id' => $this->program->id, 'account_email' => 'elif@example.com',
+        ])->assertRedirect()->assertSessionHas('account_link', fn (array $link) => $link['sent'] === true);
+        $user = User::query()->where('email', 'elif@example.com')->firstOrFail();
+        Notification::assertSentTo($user, BasvuruBildirimi::class, fn ($n) => $n->subject === 'Hesabınızı etkinleştirin' && str_contains($n->url, '/hesap/etkinlestir/'));
+        $this->get(route('students.show', $user->student))->assertSee('e-postayla gönderildi')->assertDontSee('/hesap/etkinlestir/', false);
     }
 
     public function test_ogrenci_komisyon_sayfalarina_giremez(): void
@@ -232,7 +256,10 @@ class OgrenciPaneliTest extends TestCase
         $this->actingAs($user)->deleteJson(route('documents.destroy', $doc))->assertOk();
         $this->assertSame(0, $user->student->documents()->count());
 
-        $html = $this->actingAs($user)->get(route('portal.home'))->assertOk()->getContent();
+        // Başlatılmış başvuru yokken ilk ekran "Yeni Başvuru", ders girilince "Başvuru Düzenle" olur
+        $this->actingAs($user)->get(route('portal.home'))->assertOk()->assertSee('Başvuruya başla')->assertDontSee('Başvurumun aşamaları');
+        $this->actingAs($user)->post(route('portal.courses.rows'), ['items' => [['institution' => 'Karadeniz Teknik Üniversitesi', 'name' => 'Matematik I', 'ects' => '6', 'grade_raw' => 'BB']]]);
+        $html = $this->actingAs($user)->get(route('portal.home'))->assertOk()->assertSee('Başvuru Düzenle')->getContent();
         $this->assertStringContainsString('Başvurumun aşamaları', $html);
         $this->assertStringContainsString('st-current', $html);
         $this->assertStringContainsString('Komisyonda inceleniyor', $html);
@@ -256,17 +283,6 @@ class OgrenciPaneliTest extends TestCase
         $this->actingAs($user)->post(route('portal.courses.rows'), ['items' => [['id' => $id] + $item], 'gonder' => 1])->assertRedirect(route('portal.home'));
         $this->assertSame('gonderildi', $user->student->fresh()->application_status);
         $this->actingAs($user)->post(route('portal.courses.rows'), ['items' => [['id' => $id] + $item]])->assertForbidden();
-    }
-
-    public function test_otomatik_oneri_baglanmamis_dersleri_eslestirir(): void
-    {
-        $user = $this->studentUser();
-        $key = 'ext:'.$this->ktu->courses()->where('code', 'MAT1001')->value('id');
-        $this->actingAs($user)->post(route('portal.courses.store'), ['course_key' => $key, 'grade_raw' => 'BB']);
-
-        $this->actingAs($user)->post(route('portal.matches.auto'))->assertRedirect();
-        $math = $this->curriculum->courses()->where('code', 'FMT151')->firstOrFail();
-        $this->assertSame($math->id, $user->student->transcript()->firstOrFail()->requested_course_id);
     }
 
     public function test_belge_yukleme_gonderme_ve_kilit(): void
@@ -301,7 +317,9 @@ class OgrenciPaneliTest extends TestCase
         $this->assertSame('inceleniyor', $student->fresh()->application_status);
 
         // Komisyon geri açınca öğrenci yeniden düzenleyebilir
-        $this->actingAs($admin)->put(route('students.application', $student), ['application_status' => 'taslak'])->assertRedirect();
+        $this->actingAs($admin)->put(route('students.application', $student), ['application_status' => 'taslak'])->assertSessionHasErrors('note');
+        $this->actingAs($admin)->put(route('students.application', $student), ['application_status' => 'taslak', 'note' => 'Fizik I içeriği eksik.'])->assertRedirect();
+        $this->actingAs($user->fresh())->get(route('portal.home'))->assertSee('Komisyonun notu: Fizik I içeriği eksik.');
         $this->actingAs($user->fresh())->post(route('portal.courses.store'), ['course_key' => $key, 'grade_raw' => 'AA'])->assertRedirect();
     }
 
@@ -335,7 +353,9 @@ class OgrenciPaneliTest extends TestCase
     {
         $this->post(route('register.store'), $this->registration($email));
         auth()->logout();
+        $user = User::query()->where('email', $email)->firstOrFail();
+        $user->forceFill(['kvkk_accepted_at' => now()])->save();
 
-        return User::query()->where('email', $email)->firstOrFail();
+        return $user;
     }
 }

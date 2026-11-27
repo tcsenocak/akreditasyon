@@ -26,7 +26,7 @@ return [
     // Kenar menünün üstündeki ad ve alt yazı, menünün altındaki sürüm satırı.
     'brand_title' => env('SINAV_BRAND_TITLE', 'Sınav Sistemi'),
     'brand_subtitle' => env('SINAV_BRAND_SUBTITLE', 'Atatürk Üniversitesi'),
-    'footer_text' => env('SINAV_FOOTER', 'v1.0 · © '.date('Y').' ATABAUM'),
+    'footer_text' => env('SINAV_FOOTER', 'v1.0 · Atatürk Üniversitesi Mühendislik Fakültesi'),
 
     // Yönetim sayfaları başka bir uygulamanın düzeni içinde gösterilecekse o düzenin adı
     // (ör. "layouts.app") ve içeriğin basılacağı bölüm. Boşsa sistemin kendi düzeni

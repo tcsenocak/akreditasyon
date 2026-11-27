@@ -6,8 +6,8 @@
  */
 
 return [
-    "default" => "Atatürk Üniversitesi",
-    "list" => [
+    'default' => 'Atatürk Üniversitesi',
+    'list' => [
         'Abdullah Gül Üniversitesi' => 'devlet',
         'Acıbadem Üniversitesi' => 'vakif',
         'Adana Alparslan Türkeş Bilim ve Teknoloji Üniversitesi' => 'devlet',

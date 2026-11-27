@@ -40,15 +40,19 @@
             </details>
         @endif
     </td>
-    <td>
-        <form method="POST" action="{{ route('files.items.update', $item) }}" class="no-print">
-            @csrf @method('PUT')
-            <div class="row" style="flex-wrap:nowrap">
-                <select name="status">@foreach (\App\Models\ExemptionItem::STATUSES as $k => $v)<option value="{{ $k }}" @selected($item->status === $k)>{{ $k === 'oneri' ? 'Karar bekliyor' : $v }}</option>@endforeach</select>
-                <select name="letter" title="Harf notu">@foreach ($letters as $l)<option @selected($item->letter === $l)>{{ $l }}</option>@endforeach</select>
-            </div>
-            <input name="commission_note" value="{{ $item->commission_note }}" placeholder="İçerik / değerlendirme notu" style="width:100%;margin-top:6px">
-            <button class="small" style="margin-top:6px"><x-icon name="check" :size="13" /> Kaydet</button>
-        </form>
+    <td class="no-print dec-cell">
+        @php
+            $n = 'items['.$item->id.']';
+        @endphp
+        <div class="row" style="flex-wrap:nowrap">
+            <select name="{{ $n }}[status]" form="decisions-form" data-dec-status aria-label="Karar">@foreach (\App\Models\ExemptionItem::STATUSES as $k => $v)<option value="{{ $k }}" @selected($item->status === $k)>{{ $k === 'oneri' ? 'Karar bekliyor' : $v }}</option>@endforeach</select>
+            <select name="{{ $n }}[letter]" form="decisions-form" title="Harf notu" aria-label="Harf notu">@foreach ($letters as $l)<option @selected($item->letter === $l)>{{ $l }}</option>@endforeach</select>
+        </div>
+        <select name="{{ $n }}[reject_reason]" form="decisions-form" data-dec-reason aria-label="Ret gerekçesi" style="width:100%;margin-top:6px" @if ($item->status !== 'ret') hidden @endif>
+            <option value="">Ret gerekçesi seçin</option>
+            @foreach (\App\Models\ExemptionItem::REJECT_REASONS as $k => $v)<option value="{{ $k }}" @selected($item->reject_reason === $k)>{{ $v }}</option>@endforeach
+        </select>
+        <input name="{{ $n }}[commission_note]" form="decisions-form" value="{{ $item->commission_note }}" placeholder="İçerik / değerlendirme notu" style="width:100%;margin-top:6px" aria-label="Komisyon notu">
+        @if ($item->decider)<div class="small muted" style="margin-top:4px">son işlem: {{ $item->decider->display_name }}</div>@endif
     </td>
 </tr>

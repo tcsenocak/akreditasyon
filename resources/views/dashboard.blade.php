@@ -17,25 +17,32 @@
     <div class="stat"><span class="stat-icon green"><x-icon name="database" :size="18" /></span><div>Eşdeğerlik kaydı<b>{{ $stats['pool'] }}</b></div></div>
 </div>
 
+@if ($objections->isNotEmpty())
+    <div class="alert warn" style="white-space:normal"><b>{{ $objections->count() }} itiraz cevap bekliyor:</b>
+        @foreach ($objections as $app)<a href="{{ route('applications.show', $app) }}#itiraz">{{ $app->student->full_name }}</a> ({{ $app->objected_at->format('d.m.Y') }})@if (! $loop->last), @endif @endforeach
+    </div>
+@endif
+
 <div class="card table-wrap">
     <div class="card-head">
         <div><h2>Değerlendirme bekleyen başvurular</h2><div class="sub">Öğrencilerin gönderdiği başvurular, gönderim sırasıyla</div></div>
-        <a class="btn light small" href="{{ route('students.index', ['durum' => 'gonderildi']) }}">Tümü</a>
+        <a class="btn light small" href="{{ route('applications.index') }}">Tümü</a>
     </div>
     @if ($pending->isEmpty())
         <p class="muted" style="margin:0">Bekleyen başvuru yok.</p>
     @else
         <table>
-            <tr><th>Gönderim</th><th>Öğrenci</th><th>Program</th><th>Önceki kurum</th><th class="num">Ders</th><th class="num">Belge</th><th></th></tr>
-            @foreach ($pending as $student)
+            <tr><th>Gönderim</th><th>Öğrenci</th><th>Tür</th><th>Program</th><th class="num">Ders</th><th class="num">Belge</th><th></th></tr>
+            @foreach ($pending as $app)
                 <tr>
-                    <td class="small">{{ $student->submitted_at?->format('d.m.Y H:i') }}</td>
-                    <td><a href="{{ route('students.show', $student) }}">{{ $student->full_name }}</a></td>
-                    <td>{{ $student->program?->full_name }}</td>
-                    <td>{{ $student->previous_institution }}</td>
-                    <td class="num">{{ $student->transcript_count }}</td>
-                    <td class="num">{{ $student->documents_count }}</td>
-                    <td><form method="POST" action="{{ route('files.store', $student) }}">@csrf<button class="small"><x-icon name="clipboard" :size="13" /> Değerlendirmeye al</button></form></td>
+                    <td class="small">{{ $app->submitted_at?->format('d.m.Y H:i') }}</td>
+                    <td><a href="{{ route('applications.show', $app) }}">{{ $app->student->full_name }}</a></td>
+                    <td class="small">{{ \App\Models\ExemptionApplication::SHORT_TYPES[$app->type] ?? $app->type }}</td>
+                    <td>{{ $app->student->program?->full_name }}</td>
+                    <td class="num">{{ $app->transcript_count }}</td>
+                    <td class="num">{{ $app->documents_count }}</td>
+                    <td>@if ($app->isPrep())<a class="btn small" href="{{ route('applications.show', $app) }}">Karar ver</a>
+                        @else<form method="POST" action="{{ route('files.store', $app->student) }}">@csrf<button class="small"><x-icon name="clipboard" :size="13" /> Değerlendirmeye al</button></form>@endif</td>
                 </tr>
             @endforeach
         </table>
@@ -46,7 +53,7 @@
     <div class="card">
         <div class="card-head"><div><h2>Süreç</h2><div class="sub">Görev dağılımı</div></div></div>
         <ol style="margin:0;padding-left:18px">
-            <li><b>Komisyon</b> öğrenci hesabını açar (ad, program, e-posta); geçici parola öğrenciye iletilir.</li>
+            <li><b>Komisyon</b> öğrenci hesabını açar (ad, program, e-posta); öğrenci e-postasına gelen bağlantıyla parolasını belirler.</li>
             <li><b>Öğrenci</b> önceki öğrenim bilgilerini girer, derslerini kurum/bölüm listesinden seçer, notlarını yazar.</li>
             <li><b>Öğrenci</b> derslerini AÜ dersleriyle eşleştirir (otomatik öneri alabilir), dilekçe ve belgelerini yükleyip gönderir.</li>
             <li><b>Komisyon</b> başvuruyu değerlendirmeye alır: AKTS/kredi ve içerik kontrolleriyle her talebi kabul/ret eder, notu ve yarıyılı belirler.</li>

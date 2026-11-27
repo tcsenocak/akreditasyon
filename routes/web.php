@@ -1,5 +1,7 @@
 <?php
 
+use App\Http\Controllers\AccountActivationController;
+use App\Http\Controllers\ApplicationController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CatalogController;
 use App\Http\Controllers\DashboardController;
@@ -12,11 +14,16 @@ use App\Http\Controllers\StudentController;
 use App\Http\Controllers\StudentDocumentController;
 use App\Http\Controllers\StudentPortalController;
 use App\Http\Controllers\TranscriptController;
+use App\Http\Controllers\UserController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/giris', [AuthController::class, 'showLogin'])->name('login');
 Route::post('/giris', [AuthController::class, 'login'])->name('login.attempt')->middleware('throttle:10,1');
 Route::post('/cikis', [AuthController::class, 'logout'])->name('logout');
+
+// Hesap etkinleştirme: öğrenci komisyonun gönderdiği bağlantıdan parolasını belirler
+Route::get('/hesap/etkinlestir/{token}', [AccountActivationController::class, 'show'])->name('activation.show')->middleware('throttle:30,1');
+Route::post('/hesap/etkinlestir/{token}', [AccountActivationController::class, 'store'])->name('activation.store')->middleware('throttle:10,1');
 
 Route::middleware('guest')->group(function (): void {
     Route::get('/kayit', [StudentPortalController::class, 'showRegister'])->name('register');
@@ -26,8 +33,6 @@ Route::middleware('guest')->group(function (): void {
 // Öğrenci paneli
 Route::middleware(['auth', 'role:student'])->prefix('basvuru')->name('portal.')->group(function (): void {
     Route::get('/', [StudentPortalController::class, 'home'])->name('home');
-    Route::get('/parola', [StudentPortalController::class, 'showPassword'])->name('password');
-    Route::put('/parola', [StudentPortalController::class, 'updatePassword'])->name('password.update');
     Route::put('/bilgiler', [StudentPortalController::class, 'updateProfile'])->name('profile');
     Route::get('/dersler', [StudentPortalController::class, 'courses'])->name('courses');
     Route::get('/dersler/ara', [StudentPortalController::class, 'search'])->name('courses.search')->middleware('throttle:120,1');
@@ -39,50 +44,58 @@ Route::middleware(['auth', 'role:student'])->prefix('basvuru')->name('portal.')-
     Route::put('/dersler/{transcriptCourse}', [StudentPortalController::class, 'updateCourse'])->name('courses.update');
     Route::delete('/dersler/{transcriptCourse}', [StudentPortalController::class, 'destroyCourse'])->name('courses.destroy');
     Route::get('/eslestirmeler', [StudentPortalController::class, 'matches'])->name('matches');
-    Route::post('/eslestirmeler/oner', [StudentPortalController::class, 'autoMatch'])->name('matches.auto');
+    Route::post('/yeni', [StudentPortalController::class, 'startApplication'])->name('applications.start');
+    Route::get('/kvkk', [StudentPortalController::class, 'kvkk'])->name('kvkk');
+    Route::post('/kvkk', [StudentPortalController::class, 'acceptKvkk'])->name('kvkk.accept');
+    Route::get('/dilekce', [StudentPortalController::class, 'petition'])->name('petition');
+    Route::get('/basvurularim', [StudentPortalController::class, 'applications'])->name('applications.index');
+    Route::get('/basvurularim/{application}', [StudentPortalController::class, 'showApplication'])->name('applications.show');
+    Route::post('/basvurularim/{application}/itiraz', [StudentPortalController::class, 'objection'])->name('applications.objection');
+    Route::post('/basvurularim/{application}/yaz-okulu-notlari', [StudentPortalController::class, 'summerGrades'])->name('applications.summer-grades');
+    Route::put('/hazirlik', [StudentPortalController::class, 'savePrep'])->name('prep');
     Route::get('/belgeler', [StudentPortalController::class, 'documents'])->name('documents');
     Route::post('/belgeler', [StudentDocumentController::class, 'store'])->name('documents.store');
     Route::post('/gonder', [StudentPortalController::class, 'submit'])->name('submit');
 });
 
-// Belgeler (öğrenci kendi belgesine, komisyon tümüne erişir)
+// Belgeler (öğrenci kendi belgesine, komisyon tümüne erişir) ve kendi parolası
 Route::middleware('auth')->group(function (): void {
+    Route::get('/basvuru/parola', [StudentPortalController::class, 'showPassword'])->name('portal.password');
+    Route::put('/basvuru/parola', [StudentPortalController::class, 'updatePassword'])->name('portal.password.update');
     Route::get('/belgeler/{document}', [StudentDocumentController::class, 'download'])->name('documents.download');
     Route::delete('/belgeler/{document}', [StudentDocumentController::class, 'destroy'])->name('documents.destroy');
 });
 
-// Komisyon
-Route::middleware(['auth', 'role:admin'])->group(function (): void {
+// Komisyon (başkan ve üyeler): değerlendirme, öğrenci hesapları, planları görüntüleme
+Route::middleware(['auth', 'role:admin,commission'])->group(function (): void {
     Route::post('/katalog/{program}/onayla', [CatalogController::class, 'verify'])->name('catalog.verify');
     Route::put('/ogrenciler/{student}/basvuru-durumu', [StudentController::class, 'applicationStatus'])->name('students.application');
     Route::post('/ogrenciler/{student}/hesap', [StudentController::class, 'createAccount'])->name('students.account.store');
     Route::post('/ogrenciler/{student}/hesap/parola', [StudentController::class, 'resetPassword'])->name('students.account.reset');
-    Route::delete('/ogrenciler/{student}/hesap', [StudentController::class, 'destroyAccount'])->name('students.account.destroy');
+    Route::get('/basvurular', [ApplicationController::class, 'index'])->name('applications.index');
+    Route::get('/basvurular/{application}', [ApplicationController::class, 'show'])->name('applications.show');
     Route::get('/', [DashboardController::class, 'index'])->name('dashboard');
     Route::get('/mevzuat', [DashboardController::class, 'rules'])->name('rules');
 
     Route::get('/programlar', [ProgramController::class, 'index'])->name('programs.index');
-    Route::post('/programlar/aktar', [ProgramController::class, 'import'])->name('programs.import');
-    Route::post('/programlar/indir', [ProgramController::class, 'download'])->name('programs.download');
-    Route::post('/programlar/obs', [ProgramController::class, 'obs'])->name('programs.obs');
     Route::get('/programlar/{program}', [ProgramController::class, 'show'])->whereNumber('program')->name('programs.show');
     Route::get('/planlar/{curriculum}', [ProgramController::class, 'curriculum'])->name('curricula.show');
     Route::get('/planlar/{curriculum}/ders/{course}', [ProgramController::class, 'course'])->name('curricula.course');
-    Route::post('/planlar/{curriculum}/aktif', [ProgramController::class, 'activate'])->name('curricula.activate');
-    Route::delete('/planlar/{curriculum}', [ProgramController::class, 'destroyCurriculum'])->name('curricula.destroy');
-    Route::post('/plan-dersleri/{course}', [ProgramController::class, 'updateCourse'])->name('curriculum-courses.update');
 
-    Route::resource('ogrenciler', StudentController::class)->parameters(['ogrenciler' => 'student'])->names('students');
+    Route::resource('ogrenciler', StudentController::class)->parameters(['ogrenciler' => 'student'])->names('students')->except(['destroy']);
 
     // Komisyon öğrenci dersi girmez; yalnız not dönüşüm kuralları değişince yeniden çevirir.
     Route::post('/ogrenciler/{student}/dokum/cevir', [TranscriptController::class, 'reconvert'])->name('transcript.reconvert');
 
     Route::post('/ogrenciler/{student}/muafiyet', [ExemptionFileController::class, 'store'])->name('files.store');
     Route::get('/muafiyet', [ExemptionFileController::class, 'index'])->name('files.index');
+    Route::get('/muafiyet/toplu-karar-listesi', [ExemptionFileController::class, 'board'])->name('files.board');
+    Route::put('/muafiyet/{file}/atama', [ExemptionFileController::class, 'assign'])->name('files.assign');
+    Route::put('/basvurular/{application}/itiraz', [ApplicationController::class, 'respondObjection'])->name('applications.objection');
     Route::get('/muafiyet/{file}', [ExemptionFileController::class, 'show'])->name('files.show');
     Route::put('/muafiyet/{file}', [ExemptionFileController::class, 'update'])->name('files.update');
-    Route::delete('/muafiyet/{file}', [ExemptionFileController::class, 'destroy'])->name('files.destroy');
     Route::post('/muafiyet/{file}/olustur', [ExemptionFileController::class, 'generate'])->name('files.generate');
+    Route::put('/muafiyet/{file}/kararlar', [ExemptionFileController::class, 'saveDecisions'])->name('files.decisions');
     Route::put('/muafiyet-kalem/{item}', [ExemptionFileController::class, 'updateItem'])->name('files.items.update');
     Route::delete('/muafiyet-kalem/{item}', [ExemptionFileController::class, 'destroyItem'])->name('files.items.destroy');
     Route::post('/muafiyet/{file}/toplu', [ExemptionFileController::class, 'bulk'])->name('files.bulk');
@@ -91,18 +104,44 @@ Route::middleware(['auth', 'role:admin'])->group(function (): void {
 
     Route::get('/havuz', [EquivalenceController::class, 'index'])->name('equivalences.index');
     Route::post('/havuz', [EquivalenceController::class, 'store'])->name('equivalences.store');
-    Route::delete('/havuz/{equivalence}', [EquivalenceController::class, 'destroy'])->name('equivalences.destroy');
 
     Route::get('/plan-intibak', [PlanMappingController::class, 'index'])->name('mappings.index');
     Route::get('/plan-intibak/{old}/{new}', [PlanMappingController::class, 'show'])->name('mappings.show');
+    Route::get('/plan-intibak/{old}/{new}/ogrenci', [PlanMappingController::class, 'student'])->name('mappings.student');
+});
+
+// Yalnız komisyon başkanı: kesin karar, silme, plan aktarımı, kullanıcılar ve ayarlar
+Route::middleware(['auth', 'role:admin'])->group(function (): void {
+    Route::put('/basvurular/{application}/karar', [ApplicationController::class, 'decide'])->name('applications.decide');
+    Route::delete('/ogrenciler/{student}/hesap', [StudentController::class, 'destroyAccount'])->name('students.account.destroy');
+    Route::delete('/ogrenciler/{student}', [StudentController::class, 'destroy'])->name('students.destroy');
+    Route::delete('/muafiyet/{file}', [ExemptionFileController::class, 'destroy'])->name('files.destroy');
+
+    Route::post('/programlar/aktar', [ProgramController::class, 'import'])->name('programs.import');
+    Route::post('/programlar/indir', [ProgramController::class, 'download'])->name('programs.download');
+    Route::post('/programlar/obs', [ProgramController::class, 'obs'])->name('programs.obs');
+    Route::post('/planlar/{curriculum}/aktif', [ProgramController::class, 'activate'])->name('curricula.activate');
+    Route::delete('/planlar/{curriculum}', [ProgramController::class, 'destroyCurriculum'])->name('curricula.destroy');
+    Route::post('/plan-dersleri/{course}', [ProgramController::class, 'updateCourse'])->name('curriculum-courses.update');
+
+    Route::delete('/havuz/{equivalence}', [EquivalenceController::class, 'destroy'])->name('equivalences.destroy');
     Route::post('/plan-intibak/{old}/{new}/otomatik', [PlanMappingController::class, 'auto'])->name('mappings.auto');
     Route::post('/plan-intibak/{old}/{new}', [PlanMappingController::class, 'store'])->name('mappings.store');
     Route::delete('/eslestirme/{mapping}', [PlanMappingController::class, 'destroy'])->name('mappings.destroy');
-    Route::get('/plan-intibak/{old}/{new}/ogrenci', [PlanMappingController::class, 'student'])->name('mappings.student');
 
     Route::get('/ayarlar', [SettingsController::class, 'index'])->name('settings.index');
     Route::post('/ayarlar/not', [SettingsController::class, 'storeGrade'])->name('settings.grades.store');
     Route::delete('/ayarlar/not/{gradeConversion}', [SettingsController::class, 'destroyGrade'])->name('settings.grades.destroy');
+    Route::put('/ayarlar/basvuru', [SettingsController::class, 'updateWindow'])->name('settings.window');
+    Route::post('/ayarlar/takvim', [SettingsController::class, 'storePeriod'])->name('settings.periods.store');
+    Route::delete('/ayarlar/takvim/{period}', [SettingsController::class, 'destroyPeriod'])->name('settings.periods.destroy');
+
+    Route::get('/islem-gecmisi', [DashboardController::class, 'audit'])->name('audit.index');
+    Route::get('/kullanicilar', [UserController::class, 'index'])->name('users.index');
+    Route::post('/kullanicilar', [UserController::class, 'store'])->name('users.store');
+    Route::put('/kullanicilar/{user}', [UserController::class, 'update'])->name('users.update');
+    Route::post('/kullanicilar/{user}/parola', [UserController::class, 'resetPassword'])->name('users.reset');
+    Route::delete('/kullanicilar/{user}', [UserController::class, 'destroy'])->name('users.destroy');
 });
 
 // Sınav Cevap Anahtarı Sistemi (öğrenci: /sinav, komisyon: /sinav/yonetim)

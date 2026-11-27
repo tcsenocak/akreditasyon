@@ -56,7 +56,6 @@ Route::prefix(config('sinav.prefix', 'sinav'))->middleware(SinavSecurityHeaders:
             Route::post('/ogretim-elemanlari/{instructor}/sil', [InstructorController::class, 'destroy'])->where('instructor', '[0-9]+')->name('instructors.destroy');
         });
 
-
         // Dersler ve ders evrakı
         Route::get('/dersler', [TermController::class, 'courses'])->name('courses');
         Route::post('/dersler/{course}/evrak', [TermController::class, 'docStore'])->where('course', '[0-9]+')->name('docs.store');

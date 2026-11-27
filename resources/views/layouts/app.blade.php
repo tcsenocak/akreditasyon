@@ -8,13 +8,14 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-    <link rel="stylesheet" href="{{ asset('css/app.css') }}?v=10">
+    <link rel="stylesheet" href="{{ asset('css/app.css') }}?v=13">
 </head>
 @auth
 @php
     $user = auth()->user();
     $isStudent = $user->isStudent();
     $isInstructor = $user->isInstructor();
+    $isChair = $user->isAdmin();
 @endphp
 <body class="shell">
 <aside class="sidebar" id="sidebar">
@@ -24,9 +25,12 @@
     </a>
     <nav class="nav">
         @if ($isStudent)
-            @include('partials.nav-item', ['route' => 'portal.home', 'label' => 'Başvurum', 'icon' => 'home'])
+            @php
+                $portalMode = $user->student?->portalMode() ?? 'yeni';
+            @endphp
             <div class="nav-group">BAŞVURU</div>
-            @include('partials.nav-item', ['route' => 'portal.courses', 'label' => 'Muafiyet Başvurum', 'icon' => 'book', 'patterns' => ['portal.courses*', 'portal.matches*', 'portal.documents*']])
+            @include('partials.nav-item', ['route' => 'portal.home', 'label' => \App\Models\Student::PORTAL_MODES[$portalMode], 'icon' => $portalMode === 'yeni' ? 'plus' : ($portalMode === 'duzenle' ? 'edit' : 'clipboard'), 'patterns' => ['portal.courses*', 'portal.matches*', 'portal.documents*', 'portal.petition']])
+            @include('partials.nav-item', ['route' => 'portal.applications.index', 'label' => 'Muafiyet Başvurularım', 'icon' => 'folder', 'patterns' => ['portal.applications.index', 'portal.applications.show']])
             <div class="nav-group">HESAP</div>
             @include('partials.nav-item', ['route' => 'portal.password', 'label' => 'Parolam', 'icon' => 'key', 'patterns' => ['portal.password*']])
         @elseif ($isInstructor)
@@ -46,11 +50,13 @@
             @include('partials.nav-item', ['route' => 'dashboard', 'label' => 'Ana Sayfa', 'icon' => 'home'])
             <div class="nav-group">MUAFİYET-İNTİBAK</div>
             @include('partials.nav-item', ['route' => 'students.index', 'label' => 'Öğrenciler', 'icon' => 'users', 'patterns' => ['students.*']])
+            @include('partials.nav-item', ['route' => 'applications.index', 'label' => 'Başvurular', 'icon' => 'send', 'patterns' => ['applications.*'], 'badge' => $openApplications ?? 0])
             @include('partials.nav-item', ['route' => 'files.index', 'label' => 'Değerlendirme Dosyaları', 'icon' => 'clipboard', 'patterns' => ['files.*']])
             @include('partials.nav-item', ['route' => 'programs.index', 'label' => 'Öğretim Planları', 'icon' => 'book', 'patterns' => ['programs.*', 'curricula.*']])
             @include('partials.nav-item', ['route' => 'mappings.index', 'label' => 'Plan İntibakı', 'icon' => 'shuffle', 'patterns' => ['mappings.*']])
             @include('partials.nav-item', ['route' => 'equivalences.index', 'label' => 'Eşdeğerlik Havuzu', 'icon' => 'database', 'patterns' => ['equivalences.*']])
             @include('partials.nav-item', ['route' => 'rules', 'label' => 'Mevzuat', 'icon' => 'scale'])
+            @if ($isChair)
             <div class="nav-group">SINAV CEVAP ANAHTARI</div>
             @include('partials.nav-item', ['route' => 'sinav.admin.dashboard', 'label' => 'Sınav Paneli', 'icon' => 'home'])
             @include('partials.nav-item', ['route' => 'sinav.admin.exams', 'label' => 'Sınavlar', 'icon' => 'clipboard', 'patterns' => ['sinav.admin.exams.*']])
@@ -63,12 +69,15 @@
             @include('partials.nav-item', ['route' => 'sinav.admin.qr', 'label' => 'Öğrenci QR Kodu', 'icon' => 'qr', 'patterns' => ['sinav.admin.qr.*']])
             @include('partials.nav-item', ['route' => 'sinav.admin.acc', 'label' => 'Ders Dosyası (Akreditasyon)', 'icon' => 'folder', 'patterns' => ['sinav.admin.acc.*']])
             <div class="nav-group">SİSTEM</div>
-            @include('partials.nav-item', ['route' => 'settings.index', 'label' => 'Ayarlar', 'icon' => 'settings', 'patterns' => ['settings.*']])
+            @include('partials.nav-item', ['route' => 'users.index', 'label' => 'Komisyon Üyeleri', 'icon' => 'users', 'patterns' => ['users.*']])
+            @include('partials.nav-item', ['route' => 'audit.index', 'label' => 'İşlem Geçmişi', 'icon' => 'history', 'patterns' => ['audit.*']])
+            @include('partials.nav-item', ['route' => 'settings.index', 'label' => 'Ayarlar ve Başvuru Takvimi', 'icon' => 'settings', 'patterns' => ['settings.*']])
             @include('partials.nav-item', ['route' => 'sinav.admin.settings', 'label' => 'Sınav Ayarları', 'icon' => 'settings', 'patterns' => ['sinav.admin.settings.*']])
             @include('partials.nav-item', ['route' => 'sinav.admin.audit', 'label' => 'Sınav İşlem Geçmişi', 'icon' => 'history'])
+            @endif
         @endif
     </nav>
-    <div class="sidebar-foot">v1.0 · © {{ now()->year }} <b>ATABAUM</b></div>
+    <div class="sidebar-foot">v1.0 · Atatürk Üniversitesi Mühendislik Fakültesi</div>
 </aside>
 <div class="main-col">
     <header class="topbar">
@@ -82,14 +91,14 @@
         @elseif ($isInstructor)
             <span class="pill pill-ok">Öğretim Elemanı</span>
         @else
-            <span class="pill pill-ok">Komisyon</span>
+            <span class="pill pill-ok">{{ $isChair ? 'Komisyon başkanı' : 'Komisyon üyesi' }}</span>
         @endif
         <div class="spacer"></div>
         <details class="user-menu">
-            <summary><span class="avatar">{{ mb_strtoupper(mb_substr($user->name, 0, 1)) }}</span><span class="user-name">{{ $user->name }}</span><x-icon name="chevron" :size="14" /></summary>
+            <summary><span class="avatar">{{ mb_strtoupper(mb_substr($user->name, 0, 1)) }}</span><span class="user-name">{{ $user->display_name }}</span><x-icon name="chevron" :size="14" /></summary>
             <div class="user-dropdown">
                 <div class="small muted">{{ $user->email }}</div>
-                @if ($isStudent)<a href="{{ route('portal.password') }}"><x-icon name="key" :size="14" /> Parolamı değiştir</a>@endif
+                @unless ($isInstructor)<a href="{{ route('portal.password') }}"><x-icon name="key" :size="14" /> Parolamı değiştir</a>@endunless
                 @if ($isInstructor)<a href="{{ route('sinav.admin.password') }}"><x-icon name="key" :size="14" /> Parolamı değiştir</a>@endif
                 <form method="POST" action="{{ route('logout') }}">@csrf<button type="submit" class="link-btn"><x-icon name="logout" :size="14" /> Çıkış</button></form>
             </div>

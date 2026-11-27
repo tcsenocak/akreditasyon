@@ -93,7 +93,8 @@ class PlanIntibakTest extends TestCase
         $this->actingAs(User::factory()->create())
             ->get(route('mappings.student', [$this->old, $this->new, 'student_id' => $student->id, 'semester' => 4, 'completed' => 1]))
             ->assertOk()->assertSee('Malzeme Bilimi');
-        $this->get(route('mappings.show', [$this->old, $this->new]))->assertOk();
+        $this->get(route('mappings.show', [$this->old, $this->new]))->assertOk()->assertSee('uygulanıyor');
+        $this->get(route('mappings.index'))->assertOk()->assertSee('Güncel durum: uygulanan plan intibakları')->assertSee($this->old->title)->assertDontSee('Henüz uygulanan plan intibakı yok');
     }
 
     public function test_akts_dusunce_katki_dersi_eklenir(): void

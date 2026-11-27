@@ -163,7 +163,7 @@ class Terms
 
     // ---------- Grup PIN'i ----------
 
-    /** Hocanın gruba verdiği PIN: 4-8 rakam. Boş bırakılırsa 6 haneli rastgele üretilir. */
+    /** Hocanın gruba verdiği PIN: 6-8 rakam (kısa PIN deneme yanılmayla bulunabilir). Boş bırakılırsa 6 haneli rastgele üretilir. */
     public static function setGroupPin(Group $group, ?string $rawPin): string
     {
         self::requireEditable($group->course->term);
@@ -171,8 +171,8 @@ class Terms
         if ($pin === '') {
             $pin = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
         }
-        if (! preg_match('/^\d{4,8}$/', $pin)) {
-            throw new UserError('PIN 4-8 rakamdan oluşmalı.');
+        if (! preg_match('/^\d{6,8}$/', $pin)) {
+            throw new UserError('PIN 6-8 rakamdan oluşmalı.');
         }
         if (preg_match('/^(\d)\1+$/', $pin) || str_contains('0123456789', $pin) || str_contains('9876543210', $pin)) {
             throw new UserError('PIN tahmin edilmesi kolay olmamalı (1111, 1234 gibi). Başka bir PIN seçin.');

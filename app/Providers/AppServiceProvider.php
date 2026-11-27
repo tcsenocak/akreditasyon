@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Models\ExemptionApplication;
 use App\Models\User;
 use Illuminate\Pagination\Paginator;
 use Illuminate\Support\Facades\Gate;
@@ -45,6 +46,13 @@ class AppServiceProvider extends ServiceProvider
                 default => 'Yaz',
             };
             $view->with('currentTerm', $start.'-'.($start + 1).' '.$term);
+        });
+
+        // Komisyon menüsündeki "Başvurular" rozeti: işlem bekleyen başvuru ve itiraz sayısı.
+        View::composer('layouts.app', function ($view): void {
+            if (auth()->user()?->isCommission()) {
+                $view->with('openApplications', ExemptionApplication::query()->open()->count());
+            }
         });
 
         // PHP cURL'ün CA paketi tanımlı değilse Windows kök sertifikalarından üretilen paketi kullan.

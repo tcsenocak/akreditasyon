@@ -40,7 +40,7 @@
             </select>
         </div>
         @unless ($student->exists)
-            <div class="full"><label for="account_email">Öğrencinin e-postası * <span class="muted">(panel hesabı açılır, geçici parola bir kez gösterilir)</span></label><input id="account_email" type="email" name="account_email" value="{{ old('account_email') }}" required></div>
+            <div class="full"><label for="account_email">Öğrencinin e-postası * <span class="muted">(panel hesabı açılır; öğrenci bu adrese gelen bağlantıyla parolasını kendisi belirler)</span></label><input id="account_email" type="email" name="account_email" value="{{ old('account_email') }}" required></div>
         @endunless
         <div class="full"><label for="notes">Komisyon notu</label><textarea id="notes" name="notes" style="min-height:60px;font-family:inherit">{{ old('notes', $student->notes) }}</textarea></div>
     </div>

@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Sinav;
 
 use App\Models\Sinav\Course;
 use App\Models\Sinav\Group;
-use App\Models\Sinav\Term;
 use App\Services\Sinav\Access;
 use App\Services\Sinav\Students;
 use App\Services\Sinav\UserError;

@@ -49,7 +49,7 @@
             @if ($term->editable())
               <form method="post" action="{{ route('sinav.admin.groups.pin', $g) }}" class="row" style="margin-top:8px">
                 @csrf
-                <input name="pin" class="input mono" style="max-width:150px" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="4-8 rakam" aria-label="{{ $c->code }} {{ $g->name }} grubu için yeni PIN">
+                <input name="pin" class="input mono" style="max-width:150px" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="6-8 rakam" aria-label="{{ $c->code }} {{ $g->name }} grubu için yeni PIN">
                 <button class="btn sm">{{ $g->hasPin() ? 'PIN\'i değiştir' : 'PIN belirle' }}</button>
                 <span class="small muted">Boş bırakırsanız 6 haneli rastgele PIN üretilir.@if ($g->hasPin()) Değiştirince eski PIN'le girmiş öğrenciler bu dersi yeniden PIN girene kadar göremez.@endif</span>
               </form>

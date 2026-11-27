@@ -150,7 +150,9 @@ class MuafiyetTest extends TestCase
 
     public function test_plan_yeniden_aktarilinca_muafiyet_kalemleri_korunur(): void
     {
-        $student = $this->student(['prep_completed' => true]);
+        $student = $this->student();
+        $this->addRows($student, [['code' => 'MAT101', 'name' => 'Matematik I', 'credit' => 4, 'ects' => 6, 'grade_raw' => 'BB']]);
+        $student->transcript()->update(['requested_course_id' => $this->curriculum->courses()->value('id')]);
         $this->actingAs($this->user)->post(route('files.store', $student));
         $before = ExemptionFile::query()->firstOrFail()->items()->count();
         $this->assertGreaterThan(0, $before);
@@ -181,8 +183,9 @@ class MuafiyetTest extends TestCase
         $this->actingAs($this->user)->post(route('files.store', $student));
         $file = ExemptionFile::query()->firstOrFail();
 
-        // Öğrenci beyanı komisyon kararına gelir (belge kontrolü)
-        $this->assertSame(2, $file->items()->where('rule', 'hazirlik')->where('status', 'oneri')->count());
+        // Öğrenci ne talep ettiyse o: yabancı dil beyanı satır açmaz, dosyada not olarak görünür
+        $this->assertSame(0, $file->items()->where('rule', 'hazirlik')->count());
+        $this->actingAs($this->user)->get(route('files.show', $file))->assertOk()->assertSee('hazırlık sınıfını başarıyla tamamladığını');
 
         $course = $this->curriculum->courses()->where('code', 'MUH102')->firstOrFail();
         $course->update(['common_group' => 'BIL']);
@@ -203,7 +206,8 @@ class MuafiyetTest extends TestCase
         $this->assertFalse(app('router')->has('transcript.store'));
         $this->assertFalse(app('router')->has('transcript.import'));
         $this->assertFalse(app('router')->has('files.items.store'));
-        $this->get(route('students.show', $student))->assertOk()->assertDontSee('Yeni ders adı')->assertSee('salt okunur');
+        $this->get(route('students.show', $student))->assertOk()->assertDontSee('Yeni ders adı');
+        $this->get(route('applications.show', $student->currentApplication))->assertOk()->assertDontSee('Yeni ders adı')->assertSee('salt okunur');
     }
 
     public function test_sayfalar_acilir(): void

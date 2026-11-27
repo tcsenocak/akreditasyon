@@ -2,7 +2,7 @@
 @section('title', 'Plan eşleştirme')
 @section('content')
 <div class="page-head">
-    <div><h1>{{ $old->program->full_name }}</h1><div class="sub">{{ $old->title }} → {{ $new->title }}</div></div>
+    <div><h1>{{ $old->program->full_name }}</h1><div class="sub"><b>{{ $old->start_year ?: $old->title }}</b> planının yerine <b>{{ $new->start_year ?: $new->title }}</b> planı uygulanıyor{{ $new->is_active ? ' (aktif plan)' : '' }} · {{ $old->title }} → {{ $new->title }}@if ($updatedAt) · son güncelleme {{ $updatedAt->format('d.m.Y') }}@endif</div></div>
     <div class="row">
         <a class="btn light" href="{{ route('mappings.index') }}">← Geri</a>
         <form method="POST" action="{{ route('mappings.auto', [$old, $new]) }}">@csrf<button>⟳ Sistem eşleştirmesini çalıştır</button></form>

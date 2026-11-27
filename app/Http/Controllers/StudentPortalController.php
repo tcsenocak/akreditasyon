@@ -2,17 +2,21 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AuditLog;
 use App\Models\Curriculum;
 use App\Models\CurriculumCourse;
+use App\Models\ExemptionApplication;
 use App\Models\ExemptionFile;
 use App\Models\Program;
 use App\Models\Student;
 use App\Models\StudentDocument;
 use App\Models\TranscriptCourse;
 use App\Models\User;
+use App\Services\ApplicationRules;
+use App\Services\ApplicationWindow;
 use App\Services\CatalogService;
 use App\Services\CurriculumTable;
-use App\Services\ExemptionEngine;
+use App\Services\Notifier;
 use App\Services\TextNormalizer;
 use App\Services\TranscriptService;
 use App\Services\TranscriptTemplate;
@@ -102,23 +106,22 @@ class StudentPortalController extends Controller
         $user->forceFill(['password' => Hash::make($data['password']), 'must_change_password' => false])->save();
         $request->session()->regenerate();
 
-        return redirect()->route('portal.home')->with('status', 'Parolanız değiştirildi.');
+        return redirect()->route($user->isStudent() ? 'portal.home' : ($user->isInstructor() ? 'sinav.admin.dashboard' : 'dashboard'))->with('status', 'Parolanız değiştirildi.');
     }
 
     public function home(): View
     {
         $student = $this->student()->load(['program', 'curriculum', 'transcript.requestedCourse', 'documents']);
-        $file = ExemptionFile::query()->where('student_id', $student->id)->latest()->first();
-        $decided = ExemptionFile::query()->with(['acceptedItems.course', 'acceptedItems.sources', 'items.course', 'curriculum.program'])
-            ->where('student_id', $student->id)->where('status', 'karar')->latest()->first();
+        $application = $this->application($student);
+        $file = ExemptionFile::query()->where('application_id', $application->id)->latest()->first();
         $status = $student->application_status;
         $order = ['taslak' => 0, 'gonderildi' => 1, 'inceleniyor' => 2, 'sonuclandi' => 3];
         $now = $order[$status] ?? 0;
         $stages = [
-            ['label' => 'Başvuru hazırlanıyor', 'date' => $student->created_at, 'text' => 'Derslerinizi girip eşleştirin, belgelerinizi yükleyin.'],
+            ['label' => 'Başvuru hazırlanıyor', 'date' => $application->created_at, 'text' => $application->isPrep() ? 'Dil sınavı bilgilerinizi girin, dilekçe ve sonuç belgenizi yükleyin.' : 'Derslerinizi girip eşleştirin, belgelerinizi yükleyin.'],
             ['label' => 'Gönderildi', 'date' => $student->submitted_at, 'text' => 'Başvurunuz komisyona ulaştı; artık değişiklik yapılamaz.'],
-            ['label' => 'Komisyonda inceleniyor', 'date' => $file?->created_at, 'text' => 'Muafiyet ve intibak komisyonu derslerinizi ve belgelerinizi inceliyor.'],
-            ['label' => 'Sonuçlandı', 'date' => $decided?->decision_date, 'text' => 'Yönetim kurulu kararı verildi; sonuç aşağıda.'],
+            ['label' => 'Komisyonda inceleniyor', 'date' => $file?->created_at, 'text' => 'Muafiyet ve intibak komisyonu başvurunuzu ve belgelerinizi inceliyor.'],
+            ['label' => 'Sonuçlandı', 'date' => $application->decided_at, 'text' => 'Karar verildi; sonucu Muafiyet Başvurularım sayfasında görebilirsiniz.'],
         ];
         foreach ($stages as $i => &$stage) {
             $stage['state'] = $i < $now ? 'done' : ($i === $now ? 'current' : 'todo');
@@ -127,12 +130,110 @@ class StudentPortalController extends Controller
 
         return view('portal.home', [
             'student' => $student,
+            'application' => $application,
+            'mode' => $student->portalMode(),
             'programs' => Program::sortedTurkish(Program::query()->with('curricula')->get()),
-            'checklist' => $this->checklist($student),
-            'decided' => $decided,
+            'checklist' => $this->checklist($student, $application),
             'stages' => $stages,
             'reopened' => $status === 'taslak' && $student->submitted_at !== null,
+            'windows' => collect(ExemptionApplication::TYPES)->map(fn ($label, $type) => ['open' => ApplicationWindow::isOpen($type), 'message' => ApplicationWindow::message($type)]),
         ]);
+    }
+
+    /**
+     * "Muafiyet Başvurularım": gönderilmiş ve karara bağlanmış tüm başvuruların özet listesi.
+     */
+    public function applications(): View
+    {
+        $student = $this->student();
+        $applications = $student->applications()->with(['exemptionFile' => fn ($q) => $q->withCount(['acceptedItems', 'items'])])
+            ->where('status', '!=', 'taslak')->reorder()->orderByDesc('id')->get();
+
+        return view('portal.applications', ['student' => $student, 'applications' => $applications]);
+    }
+
+    /**
+     * Tek başvurunun ayrıntısı: talepler, karar, itiraz ve (yaz okulunda) not girişi.
+     */
+    public function showApplication(ExemptionApplication $application): View
+    {
+        $student = $this->ownApplication($application);
+        $application->load(['transcript.requestedCourse', 'documents']);
+        $decided = ExemptionFile::query()->with(['acceptedItems.course', 'acceptedItems.sources', 'items.course'])
+            ->where('application_id', $application->id)->where('status', 'karar')->latest()->first();
+
+        return view('portal.application', [
+            'student' => $student,
+            'application' => $application,
+            'decided' => $decided,
+            'requests' => $application->transcript->whereNotNull('requested_course_id'),
+            'summerRows' => $application->isSummer() && $application->status === 'sonuclandi'
+                ? $application->transcript->whereNotNull('requested_course_id')
+                    ->filter(fn ($row) => $decided?->acceptedItems->contains(fn ($item) => $item->sources->contains('id', $row->id)))
+                : collect(),
+        ]);
+    }
+
+    /**
+     * Başvuru oturumdaki öğrenciye ait olmalıdır.
+     */
+    private function ownApplication(ExemptionApplication $application): Student
+    {
+        $student = $this->student();
+        abort_unless($application->student_id === $student->id && $application->status !== 'taslak', 404);
+
+        return $student;
+    }
+
+    /**
+     * Önceki başvuru sonuçlandıysa yeni başvuru açar; güncel başvuru henüz hazırlanıyorsa yalnız türünü değiştirir.
+     */
+    public function startApplication(Request $request): RedirectResponse
+    {
+        $student = $this->student();
+        $data = $request->validate(['type' => ['required', Rule::in(array_keys(ExemptionApplication::TYPES))]]);
+        $application = $this->application($student);
+
+        if ($student->application_status === 'taslak') {
+            if ($data['type'] === 'hazirlik' && $student->transcript()->exists()) {
+                return back()->withErrors(['type' => 'Hazırlık muafiyeti başvurusunda ders girilmez. Önce girdiğiniz dersleri silin.']);
+            }
+            $application->update(['type' => $data['type']]);
+
+            return redirect()->route('portal.courses')->with('status', 'Başvuru türü: '.ExemptionApplication::TYPES[$data['type']].'.');
+        }
+        if ($student->application_status !== 'sonuclandi') {
+            return back()->withErrors(['type' => 'Önceki başvurunuz sonuçlanmadan yeni başvuru açılamaz.']);
+        }
+        if (! ApplicationWindow::isOpen($data['type'])) {
+            return back()->withErrors(['type' => ApplicationWindow::message($data['type'])]);
+        }
+        $student->startApplication($data['type']);
+        AuditLog::record('yeni_basvuru', 'Öğrenci yeni başvuru açtı: '.ExemptionApplication::TYPES[$data['type']], $student);
+
+        return redirect()->route('portal.courses')->with('status', 'Yeni başvurunuz açıldı ('.ExemptionApplication::TYPES[$data['type']].'). Önceki başvurularda talep ettiğiniz dersler yeniden istenemez.');
+    }
+
+    /**
+     * Hazırlık sınıfı muafiyeti: geçerliliği kabul edilen dil sınavı ve puanı.
+     */
+    public function savePrep(Request $request): RedirectResponse
+    {
+        $student = $this->editableStudent();
+        $application = $this->application($student);
+        abort_unless($application->isPrep(), 404);
+        $data = $request->validate([
+            'language_exam' => ['required', 'string', 'max:60'],
+            'language_score' => ['required', 'numeric', 'between:0,120'],
+            'language_exam_date' => ['nullable', 'date', 'before_or_equal:today'],
+        ]);
+        $application->update($data);
+
+        if ($request->boolean('gonder')) {
+            return $this->submit();
+        }
+
+        return redirect()->route('portal.courses')->with('status', 'Dil sınavı bilgileriniz kaydedildi.');
     }
 
     public function updateProfile(Request $request): RedirectResponse
@@ -168,12 +269,18 @@ class StudentPortalController extends Controller
      * Muafiyet ekranı ("Aldığım Dersler"): (1) öğrenci daha önce aldığı dersleri girer, (2) öğretim
      * planından + ile seçtiği AÜ dersine karşılık gelen kendi derslerini işaretler, (3) kaydedip gönderir.
      */
-    public function courses(CatalogService $catalog): View
+    public function courses(CatalogService $catalog): View|RedirectResponse
     {
-        $student = $this->student()->load(['transcript.requestedCourse', 'curriculum.program']);
+        $student = $this->student();
+        if (! $student->isEditableByStudent()) {
+            return redirect()->route($student->application_status === 'sonuclandi' ? 'portal.applications.index' : 'portal.home');
+        }
+        $student->load(['transcript.requestedCourse', 'curriculum.program']);
+        $application = $this->application($student);
         $programKey = $this->programKey($student, $catalog);
         $targets = $this->targetsFor($student);
-        $targetIds = $targets->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $blocked = ApplicationRules::blockedTargets($student, $targets);
+        $targetIds = $targets->pluck('id')->map(fn ($id) => (int) $id)->reject(fn ($id) => isset($blocked[$id]))->values()->all();
         $universities = array_keys(config('universiteler.list'));
         $defaultInstitution = in_array($student->previous_institution, $universities, true) ? $student->previous_institution : config('universiteler.default');
 
@@ -187,7 +294,12 @@ class StudentPortalController extends Controller
             'table' => $student->curriculum ? CurriculumTable::build($student->curriculum) : null,
             'targets' => $targets,
             'targetIds' => $targetIds,
-            'checklist' => $this->checklist($student->loadMissing('documents')),
+            'checklist' => $this->checklist($student->loadMissing('documents'), $application),
+            'application' => $application,
+            'blocked' => $blocked,
+            'summerMax' => ApplicationRules::summerMaxEcts(),
+            'window' => ['open' => ApplicationWindow::isOpen($application->type), 'message' => ApplicationWindow::message($application->type)],
+            'institutions' => $student->transcript->pluck('institution')->filter()->unique()->values(),
         ]);
     }
 
@@ -200,7 +312,11 @@ class StudentPortalController extends Controller
     public function saveRows(Request $request, CatalogService $catalog): RedirectResponse
     {
         $student = $this->editableStudent()->load('transcript');
-        $targetIds = $this->targetsFor($student)->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $application = $this->application($student);
+        abort_if($application->isPrep(), 422, 'Hazırlık muafiyeti başvurusunda ders girilmez.');
+        $targets = $this->targetsFor($student);
+        $blocked = ApplicationRules::blockedTargets($student, $targets);
+        $targetIds = $targets->pluck('id')->map(fn ($id) => (int) $id)->all();
         $data = $request->validate([
             'items' => ['array'],
             'items.*.id' => ['nullable', 'integer'],
@@ -210,7 +326,7 @@ class StudentPortalController extends Controller
             'items.*.name' => ['required', 'string', 'max:200'],
             'items.*.credit' => ['nullable', 'numeric', 'min:0', 'max:30'],
             'items.*.ects' => ['required', 'numeric', 'min:0', 'max:60'],
-            'items.*.grade_raw' => ['required', 'string', 'max:16'],
+            'items.*.grade_raw' => [$application->isSummer() ? 'nullable' : 'required', 'string', 'max:16'],
             'deleted' => ['array'],
             'deleted.*' => ['integer'],
         ], [
@@ -218,6 +334,15 @@ class StudentPortalController extends Controller
             'items.*.ects.required' => 'Her satırda AKTS yazın.',
             'items.*.grade_raw.required' => 'Her satırda notunuzu yazın.',
         ]);
+
+        $requested = collect($data['items'] ?? [])->pluck('target_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all();
+        $again = array_values(array_intersect_key($blocked, array_flip($requested)));
+        if ($again !== []) {
+            return back()->withInput()->withErrors(['items' => 'Bu dersler için daha önce başvurdunuz, yeniden talep edilemez: '.collect($again)->pluck('label')->implode(', ')]);
+        }
+        if ($application->isSummer() && ($total = ApplicationRules::totalEcts($targets, $requested)) > ApplicationRules::summerMaxEcts()) {
+            return back()->withInput()->withErrors(['items' => 'Yaz okulunda en fazla '.ApplicationRules::summerMaxEcts().' AKTS ders alınabilir; seçtiğiniz AÜ derslerinin toplamı '.$total.' AKTS.']);
+        }
 
         $saved = 0;
         DB::transaction(function () use ($student, $data, $catalog, $request, &$saved): void {
@@ -406,29 +531,6 @@ class StudentPortalController extends Controller
     }
 
     /**
-     * Sistemin önerdiği eşleştirmeleri, öğrencinin henüz eşleştirmediği derslere uygular.
-     */
-    public function autoMatch(ExemptionEngine $engine): RedirectResponse
-    {
-        $student = $this->editableStudent()->load('transcript');
-        abort_unless($student->curriculum, 422, 'Önce AÜ programınızı seçin.');
-        $applied = 0;
-        foreach ($engine->suggestRequests($student, $student->curriculum) as $suggestion) {
-            foreach ($suggestion['source_ids'] as $sourceId) {
-                $course = $student->transcript->firstWhere('id', $sourceId);
-                if ($course && $course->requested_course_id === null) {
-                    $course->update(['requested_course_id' => $suggestion['target_id']]);
-                    $applied++;
-                }
-            }
-        }
-
-        return back()->with('status', $applied > 0
-            ? "{$applied} dersiniz için eşleştirme önerildi. Lütfen her satırı kontrol edin; yanlış olanları değiştirin."
-            : 'Yeni öneri bulunamadı. Eşleştirmeleri kendiniz seçebilirsiniz.');
-    }
-
-    /**
      * @return Collection<int, CurriculumCourse>
      */
     private function targetsFor(Student $student): Collection
@@ -448,30 +550,157 @@ class StudentPortalController extends Controller
     public function submit(): RedirectResponse
     {
         $student = $this->editableStudent()->load(['transcript', 'documents']);
-        $missing = collect($this->checklist($student))->where('required', true)->where('done', false);
+        $application = $this->application($student);
+        if (! ApplicationWindow::isOpen($application->type)) {
+            return back()->with('status', 'Kaydedildi.')->withErrors(['submit' => ApplicationWindow::message($application->type).' Başvurunuz kaydedildi; alım açılınca gönderebilirsiniz.']);
+        }
+        $missing = collect($this->checklist($student, $application))->where('required', true)->where('done', false);
         if ($missing->isNotEmpty()) {
             return back()->with('status', 'Kaydedildi.')->withErrors(['submit' => 'Göndermeden önce tamamlayın: '.$missing->pluck('label')->implode(', ')]);
         }
         $student->update(['application_status' => 'gonderildi', 'submitted_at' => now()]);
+        $application->update(['return_note' => null]);
+        AuditLog::record('gonderim', $application->type_label.' gönderildi', $student);
+        Notifier::commission($student, 'Yeni başvuru', [
+            $student->full_name.' '.mb_strtolower($application->type_label, 'UTF-8').' gönderdi.',
+            'Değerlendirmek için öğrenci sayfasını açın.',
+        ], $application->exemptionFile?->assignee);
 
-        return redirect()->route('portal.home')->with('status', 'Başvurunuz komisyona gönderildi. Sonuç bu sayfada görünecektir.');
+        return redirect()->route('portal.home')->with('status', 'Başvurunuz komisyona gönderildi. Sonuç Muafiyet Başvurularım sayfasında görünecektir.');
     }
 
     /**
+     * Başvuru türüne göre gönderim öncesi yapılacaklar. Birden çok kurumdan ders saydıran öğrenci
+     * her kurum için ayrı (o kurumun transkript ve içeriklerini birleştiren) belge yükler.
+     *
      * @return list<array{label: string, done: bool, required: bool}>
      */
-    private function checklist(Student $student): array
+    private function checklist(Student $student, ?ExemptionApplication $application = null): array
     {
-        $types = $student->documents->pluck('type');
+        $application ??= $this->application($student);
+        $docs = $student->documents;
+        $types = $docs->pluck('type');
+        $petition = ['label' => StudentDocument::TYPES['dilekce'], 'done' => $types->contains('dilekce'), 'required' => true];
 
-        return [
+        if ($application->isPrep()) {
+            return [
+                ['label' => 'Dil sınavı adı ve puanı', 'done' => filled($application->language_exam) && $application->language_score !== null, 'required' => true],
+                $petition,
+                ['label' => StudentDocument::TYPES['dil'], 'done' => $types->contains('dil'), 'required' => true],
+            ];
+        }
+
+        $list = [
             ['label' => 'Kişisel ve önceki öğrenim bilgileri', 'done' => filled($student->previous_institution) && filled($student->program_id), 'required' => true],
-            ['label' => 'Aldığınız dersler (en az bir ders)', 'done' => $student->transcript->isNotEmpty(), 'required' => true],
-            ['label' => StudentDocument::TYPES['transkript'], 'done' => $types->contains('transkript'), 'required' => true],
-            ['label' => StudentDocument::TYPES['dilekce'], 'done' => $types->contains('dilekce'), 'required' => true],
-            ['label' => 'Ders eşleştirmeleri (hangi dersinize karşılık hangi AÜ dersi)', 'done' => $student->transcript->whereNotNull('requested_course_id')->isNotEmpty() || $student->prep_completed || $student->yds_score, 'required' => true],
-            ['label' => StudentDocument::TYPES['icerik'], 'done' => $types->contains('icerik'), 'required' => false],
+            ['label' => $application->isSummer() ? 'Yaz okulunda alacağınız dersler (en az bir ders)' : 'Aldığınız dersler (en az bir ders)', 'done' => $student->transcript->isNotEmpty(), 'required' => true],
         ];
+        if (! $application->isSummer()) {
+            $institutions = $student->transcript->pluck('institution')->filter()->unique()->values();
+            if ($institutions->count() > 1) {
+                foreach ($institutions as $institution) {
+                    $list[] = ['label' => StudentDocument::TYPES['transkript'].' — '.$institution, 'done' => $docs->contains(fn ($d) => $d->type === 'transkript' && $d->institution === $institution), 'required' => true];
+                }
+            } else {
+                $list[] = ['label' => StudentDocument::TYPES['transkript'], 'done' => $types->contains('transkript'), 'required' => true];
+            }
+        }
+        $list[] = $petition;
+        $list[] = ['label' => 'Ders eşleştirmeleri (hangi dersinize karşılık hangi AÜ dersi)', 'done' => $student->transcript->whereNotNull('requested_course_id')->isNotEmpty(), 'required' => true];
+        $list[] = ['label' => StudentDocument::TYPES['icerik'], 'done' => $types->contains('icerik'), 'required' => $application->isSummer()];
+
+        return $list;
+    }
+
+    /**
+     * Kişisel verilerin işlenmesine ilişkin aydınlatma metni (6698 sayılı KVKK Md. 10).
+     */
+    public function kvkk(): View
+    {
+        return view('portal.kvkk', ['accepted' => Auth::user()->kvkk_accepted_at]);
+    }
+
+    public function acceptKvkk(Request $request): RedirectResponse
+    {
+        $request->validate(['okudum' => ['accepted']], ['okudum.accepted' => 'Devam etmek için metni okuduğunuzu onaylayın.']);
+        $request->user()->forceFill(['kvkk_accepted_at' => now()])->save();
+
+        return redirect()->route('portal.home');
+    }
+
+    /**
+     * Öğrencinin girdiği bilgilerden doldurulmuş dilekçe; yazdırılıp imzalanır ve belge olarak yüklenir.
+     */
+    public function petition(): View
+    {
+        $student = $this->student()->load(['program', 'curriculum', 'transcript.requestedCourse']);
+
+        return view('portal.petition', [
+            'student' => $student,
+            'application' => $this->application($student),
+            'email' => Auth::user()->email,
+        ]);
+    }
+
+    /**
+     * Karara itiraz (Uygulama Esasları Md. 5/9): karardan sonraki beş iş günü içinde, bir kez.
+     */
+    public function objection(Request $request, ExemptionApplication $application): RedirectResponse
+    {
+        $student = $this->ownApplication($application);
+        abort_unless($application->canObject(), 422, 'İtiraz süresi geçti ya da daha önce itiraz ettiniz.');
+        $data = $request->validate(['objection_text' => ['required', 'string', 'min:20', 'max:3000']], [
+            'objection_text.min' => 'İtirazınızı gerekçesiyle birlikte en az birkaç cümleyle yazın.',
+        ]);
+        $application->update(['objection_text' => $data['objection_text'], 'objected_at' => now()]);
+        AuditLog::record('itiraz', 'Öğrenci karara itiraz etti ('.$application->type_label.', başvuru #'.$application->id.')', $student);
+        Notifier::commission($student, 'Karara itiraz', [$student->full_name.' muafiyet kararına itiraz etti.', 'İtiraz, Başvurular sayfasında cevap bekliyor.'], $application->exemptionFile?->assignee);
+
+        return back()->with('status', 'İtirazınız komisyona iletildi.');
+    }
+
+    /**
+     * Yaz okulu ön onayı sonuçlandıktan sonra öğrenci aldığı notları ve transkriptini girer.
+     */
+    public function summerGrades(Request $request, ExemptionApplication $application): RedirectResponse
+    {
+        $student = $this->ownApplication($application);
+        abort_unless($application->isSummer() && $application->status === 'sonuclandi', 422, 'Yaz okulu notları yalnız onaylanmış yaz okulu başvurusuna girilir.');
+        $rows = $application->transcript()->whereNotNull('requested_course_id')->get()->keyBy('id');
+        $data = $request->validate([
+            'grades' => ['required', 'array'],
+            'grades.*' => ['nullable', 'string', 'max:16'],
+            'transkript' => [$application->summer_grades_at ? 'nullable' : 'required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:15360'],
+        ], ['transkript.required' => 'Yaz okulu transkriptinizi yükleyin.']);
+
+        DB::transaction(function () use ($data, $rows, $student, $application, $request): void {
+            foreach ($data['grades'] as $id => $grade) {
+                if (($row = $rows->get((int) $id)) && filled($grade)) {
+                    $this->transcripts->save($row, ['grade_raw' => trim((string) $grade), 'name' => $row->name, 'code' => $row->code, 'credit' => $row->credit, 'ects' => $row->ects, 'semester' => $row->semester]);
+                }
+            }
+            if ($upload = $request->file('transkript')) {
+                StudentDocument::query()->create([
+                    'student_id' => $student->id,
+                    'application_id' => $application->id,
+                    'type' => 'transkript',
+                    'original_name' => mb_substr($upload->getClientOriginalName(), 0, 250),
+                    'path' => $upload->store('belgeler/'.$student->id, 'local'),
+                    'size' => $upload->getSize(),
+                    'mime' => $upload->getMimeType(),
+                    'uploaded_by' => $request->user()->id,
+                ]);
+            }
+            $application->update(['summer_grades_at' => now()]);
+        });
+        AuditLog::record('yaz_notu', 'Öğrenci yaz okulu notlarını girdi', $student);
+        Notifier::commission($student, 'Yaz okulu notları', [$student->full_name.' yaz okulunda aldığı derslerin notlarını girdi; harf notlarını kesinleştirin.'], $application->exemptionFile?->assignee);
+
+        return back()->with('status', 'Yaz okulu notlarınız komisyona iletildi.');
+    }
+
+    private function application(Student $student): ExemptionApplication
+    {
+        return $student->currentApplication ?? $student->startApplication('normal');
     }
 
     private function student(): Student

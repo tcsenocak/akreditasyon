@@ -16,7 +16,6 @@
     <h1>Yalnızca telefondan</h1>
     <p style="max-width:440px">Sınav cevap anahtarlarına yalnızca telefonunuzun tarayıcısından ulaşabilirsiniz. Telefonunuzun kamerasıyla aşağıdaki kodu okutun.</p>
     <canvas id="phone-qr" width="200" height="200" style="background:#fff;border-radius:8px" role="img" aria-label="Bu sayfanın QR kodu"></canvas>
-    <p class="st-foot"><a href="{{ route('sinav.admin.dashboard') }}">Yönetici girişi</a></p>
   </div>
 </div>
 <div id="st-app">
@@ -39,7 +38,6 @@
   </main>
   {{-- Yazdır / "PDF olarak kaydet" ile içerik alınamasın: baskıda sayfa boş çıkar. --}}
   <p class="no-print-msg">Bu sayfa yazdırılamaz.</p>
-  <footer class="st-foot"><a href="{{ route('sinav.admin.dashboard') }}">Yönetici girişi</a></footer>
 </div>
 <script src="{{ asset('vendor/sinav/vendor/qrcode.min.js') }}"></script>
 <script src="{{ asset('vendor/sinav/student.js') }}?v=2"></script>

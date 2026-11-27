@@ -9,6 +9,8 @@ use App\Models\Student;
 use App\Services\PlanAdaptationService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 
@@ -16,9 +18,33 @@ class PlanMappingController extends Controller
 {
     public function __construct(private PlanAdaptationService $service) {}
 
+    /**
+     * Uygulanan plan intibakları: hangi (eski) planın yerine hangi planın uygulandığı, eşleştirme sayılarıyla.
+     *
+     * @return Collection<int, array{old: Curriculum, new: Curriculum, total: int, locked: int, updated_at: ?Carbon, decisions: string}>
+     */
+    private function applied(): Collection
+    {
+        $groups = CourseMapping::query()->get(['old_curriculum_id', 'new_curriculum_id', 'locked', 'decision_ref', 'updated_at'])
+            ->groupBy(fn (CourseMapping $m) => $m->old_curriculum_id.'-'.$m->new_curriculum_id);
+        $curricula = Curriculum::query()->with('program')
+            ->whereIn('id', $groups->flatMap(fn ($g) => [$g->first()->old_curriculum_id, $g->first()->new_curriculum_id])->unique())->get()->keyBy('id');
+
+        return $groups->map(fn ($g) => [
+            'old' => $curricula->get($g->first()->old_curriculum_id),
+            'new' => $curricula->get($g->first()->new_curriculum_id),
+            'total' => $g->count(),
+            'locked' => $g->where('locked', true)->count(),
+            'updated_at' => $g->max('updated_at'),
+            'decisions' => $g->pluck('decision_ref')->filter()->unique()->implode(', '),
+        ])->filter(fn (array $row) => $row['old'] && $row['new'])
+            ->sortBy(fn (array $row) => $row['old']->program?->name.' '.$row['old']->start_year)->values();
+    }
+
     public function index(): View
     {
         return view('mappings.index', [
+            'applied' => $this->applied(),
             'programs' => Program::sortedTurkish(Program::query()->with(['curricula' => fn ($q) => $q->withCount('courses')->orderBy('start_year')])->get()),
         ]);
     }
@@ -34,6 +60,7 @@ class PlanMappingController extends Controller
         $mappedNew = $mappings->flatMap(fn ($m) => $m->newCourses->pluck('id'));
 
         return view('mappings.show', [
+            'updatedAt' => $mappings->max('updated_at'),
             'old' => $old,
             'new' => $new,
             'mappings' => $mappings->sortBy(fn ($m) => $m->oldCourses->min('semester')),

@@ -2,8 +2,11 @@
 @section('title', $student->full_name)
 @section('content')
 @php
-    $st = $student->application_status;
-    $requests = $student->transcript->whereNotNull('requested_course_id');
+    $isChair = auth()->user()->isAdmin();
+    $link = session('account_link');
+    $submitted = $student->applications->filter(fn ($a) => $a->status !== 'taslak' || $a->submitted_at)->sortByDesc('id')->values();
+    $draft = $student->currentApplication;
+    $draftStarted = $draft && $draft->status === 'taslak' && ! $draft->submitted_at && $student->transcript->isNotEmpty();
 @endphp
 <div class="page-head">
     <div>
@@ -15,64 +18,37 @@
     </div>
     <div class="row">
         <a class="btn light" href="{{ route('students.edit', $student) }}"><x-icon name="edit" :size="14" /> Kimlik / program</a>
+        @if ($isChair)
         <form method="POST" action="{{ route('students.destroy', $student) }}" onsubmit="return confirm('Öğrenci ve tüm dosyaları silinecek. Emin misiniz?')">@csrf @method('DELETE')<button class="danger">Sil</button></form>
+        @endif
     </div>
-</div>
-
-<div class="grid grid-5">
-    <div class="stat"><span class="stat-icon"><x-icon name="clipboard" :size="18" /></span><div>Başvuru<b style="font-size:15px">{{ \App\Models\Student::APPLICATION_STATUSES[$st] ?? $st }}</b></div></div>
-    <div class="stat"><span class="stat-icon sky"><x-icon name="book" :size="18" /></span><div>Ders<b>{{ $student->transcript->count() }}</b></div></div>
-    <div class="stat"><span class="stat-icon violet"><x-icon name="link" :size="18" /></span><div>Eşleştirme<b>{{ $requests->count() }}</b></div></div>
-    <div class="stat"><span class="stat-icon green"><x-icon name="file" :size="18" /></span><div>Belge<b>{{ $student->documents->count() }}</b></div></div>
 </div>
 
 <div class="grid grid-2">
     <div class="card">
-        <div class="card-head"><div><h2>Değerlendirme</h2><div class="sub">Öğrencinin eşleştirmeleri, kontrollerle birlikte komisyon dosyasına alınır</div></div></div>
-        @if ($student->exemptionFiles->isEmpty())
-            <form method="POST" action="{{ route('files.store', $student) }}" class="row">
-                @csrf
-                <button @disabled($requests->isEmpty() && ! $student->yds_score && ! $student->prep_completed)><x-icon name="clipboard" :size="14" /> Değerlendirmeye al</button>
-                @if ($st === 'taslak')<span class="small muted">Öğrenci başvurusunu henüz göndermedi.</span>@endif
-            </form>
-        @else
-            <table>
-                @foreach ($student->exemptionFiles as $file)
-                    <tr>
-                        <td><a href="{{ route('files.show', $file) }}">Dosya #{{ $file->id }}</a> <span class="small muted">{{ $file->curriculum->title }}</span></td>
-                        <td class="num">{{ (float) $file->exempt_ects }} AKTS</td>
-                        <td class="num">{{ $file->effective_semester }}. yy</td>
-                        <td><span class="badge {{ $file->status === 'karar' ? 'ok' : 'warn' }}">{{ \App\Models\ExemptionFile::STATUSES[$file->status] }}</span></td>
-                    </tr>
-                @endforeach
-            </table>
-        @endif
-
-        <h3>Başvuru durumu</h3>
-        <form method="POST" action="{{ route('students.application', $student) }}" class="row">
-            @csrf @method('PUT')
-            <select name="application_status">@foreach (\App\Models\Student::APPLICATION_STATUSES as $k => $v)<option value="{{ $k }}" @selected($st === $k)>{{ $v }}</option>@endforeach</select>
-            <button class="light">Değiştir</button>
-            @if ($student->submitted_at)<span class="small muted">gönderim: {{ $student->submitted_at->format('d.m.Y H:i') }}</span>@endif
-        </form>
-        <p class="small muted">Eksik/hatalı bilgi varsa “Hazırlanıyor” yapın; öğrenci düzeltip yeniden gönderir.</p>
-
-        <h3>Öğrenci paneli hesabı</h3>
-        @if (session('account_password'))
-            <div class="alert info" style="white-space:normal">
-                Giriş bilgileri — <b>bu parola yalnızca şimdi gösterilir</b>, öğrenciye iletin:<br>
-                Adres: <code>{{ route('login') }}</code><br>
-                E-posta: <code>{{ session('account_password')['email'] }}</code><br>
-                Geçici parola: <code style="font-size:15px">{{ session('account_password')['password'] }}</code><br>
-                <span class="small">Öğrenci ilk girişte kendi parolasını belirlemek zorundadır.</span>
-            </div>
+        <div class="card-head"><div><h2>Öğrenci paneli hesabı</h2><div class="sub">Parolayı öğrenci kendisi belirler; komisyon parola iletmez</div></div></div>
+        @if ($link)
+            @if ($link['sent'])
+                <div class="alert ok" style="white-space:normal">Etkinleştirme bağlantısı <b>{{ $link['email'] }}</b> adresine e-postayla gönderildi. Öğrenci bağlantıdan parolasını belirleyip sisteme girer; bağlantı {{ \App\Services\AccountActivation::VALID_DAYS }} gün geçerlidir.</div>
+            @else
+                <div class="alert info" style="white-space:normal">
+                    E-posta sunucusu tanımlı olmadığı için bağlantı <b>otomatik gönderilemedi</b>. Aşağıdaki bağlantıyı öğrenciye ({{ $link['email'] }}) siz iletin — <b>yalnızca şimdi gösterilir</b>, {{ \App\Services\AccountActivation::VALID_DAYS }} gün geçerlidir:<br>
+                    <input readonly value="{{ $link['url'] }}" onclick="this.select()" style="width:100%;margin:6px 0;font-family:monospace;font-size:12px" aria-label="Etkinleştirme bağlantısı">
+                    <button type="button" class="small light" onclick="navigator.clipboard.writeText(this.previousElementSibling.value); this.textContent = 'Kopyalandı'">Bağlantıyı kopyala</button>
+                    <span class="small">Öğrenci bu bağlantıdan kendi parolasını belirler; ayrıca parola göndermeniz gerekmez.</span>
+                </div>
+            @endif
         @endif
         @if ($student->user)
-            <p class="small">Hesap: <b>{{ $student->user->email }}</b>
-                @if ($student->user->must_change_password)<span class="badge warn">geçici parola — henüz değiştirilmedi</span>@else<span class="badge ok">etkin</span>@endif</p>
+            <p>Hesap: <b>{{ $student->user->email }}</b>
+                @if ($student->user->activation_token && $student->user->must_change_password)<span class="badge warn">etkinleştirme bekleniyor</span>
+                @elseif ($student->user->must_change_password)<span class="badge warn">geçici parola — henüz değiştirilmedi</span>
+                @else<span class="badge ok">etkin</span>@endif</p>
             <div class="row">
-                <form method="POST" action="{{ route('students.account.reset', $student) }}" onsubmit="return confirm('Yeni geçici parola üretilecek; eski parola geçersiz olur. Devam?')">@csrf<button class="small light"><x-icon name="key" :size="13" /> Parolayı sıfırla</button></form>
+                <form method="POST" action="{{ route('students.account.reset', $student) }}" onsubmit="return confirm('Öğrenciye yeni bir etkinleştirme / parola belirleme bağlantısı gönderilecek; önceki bağlantı geçersiz olur. Devam?')">@csrf<button class="small light"><x-icon name="send" :size="13" /> {{ $student->user->must_change_password ? 'Etkinleştirme bağlantısını yeniden gönder' : 'Parola belirleme bağlantısı gönder' }}</button></form>
+                @if ($isChair)
                 <form method="POST" action="{{ route('students.account.destroy', $student) }}" onsubmit="return confirm('Öğrenci hesabı kapatılsın mı? Başvuru kayıtları silinmez.')">@csrf @method('DELETE')<button class="small danger">Hesabı kapat</button></form>
+                @endif
             </div>
         @else
             <form method="POST" action="{{ route('students.account.store', $student) }}" class="row">
@@ -92,18 +68,44 @@
             <tr><th>Yabancı dil</th><td>{{ $student->yds_score ? ($student->yds_exam ?: 'YDS').' '.$student->yds_score : '—' }} @if ($student->prep_completed)<span class="badge ok">hazırlık başarılı</span>@endif</td></tr>
             <tr><th>İletişim</th><td>{{ $student->user?->email }} {{ $student->phone ? '· '.$student->phone : '' }}</td></tr>
         </table>
-        <h3>Belgeler</h3>
-        <table>
-            @forelse ($student->documents as $doc)
-                <tr>
-                    <td class="small">{{ \App\Models\StudentDocument::TYPES[$doc->type] ?? $doc->type }}</td>
-                    <td><a href="{{ route('documents.download', $doc) }}"><x-icon name="download" :size="13" /> {{ $doc->original_name }}</a> <span class="small muted">{{ $doc->size_label }}</span></td>
-                </tr>
-            @empty
-                <tr><td class="muted">Belge yüklenmemiş.</td></tr>
-            @endforelse
-        </table>
+        @if ($student->notes)<p class="small"><b>Komisyon notu:</b> {{ $student->notes }}</p>@endif
     </div>
+</div>
+
+<div class="card table-wrap">
+    <div class="card-head"><div><h2>Başvuruları</h2><div class="sub">Öğrencinin gönderdiği tüm başvurular; ayrıntı, belgeler, değerlendirme ve itiraz için başvuruyu açın</div></div></div>
+    @if ($submitted->isEmpty())
+        <p class="muted" style="margin:0">Öğrenci henüz başvuru göndermedi.{{ $draftStarted ? ' Bir başvuru hazırlıyor ('.$student->transcript->count().' ders girdi).' : '' }}</p>
+    @else
+        @if ($draftStarted)<p class="small muted">Öğrenci ayrıca yeni bir başvuru hazırlıyor ({{ $draft->type_label }}, henüz göndermedi).</p>@endif
+        <table>
+            <tr><th>#</th><th>Tür</th><th>Gönderim</th><th>Durum</th><th class="num">Ders</th><th class="num">Belge</th><th>Sonuç</th><th>İtiraz</th><th></th></tr>
+            @foreach ($submitted as $app)
+                @php
+                    $file = $app->exemptionFile;
+                @endphp
+                <tr>
+                    <td>{{ $submitted->count() - $loop->index }}</td>
+                    <td><a href="{{ route('applications.show', $app) }}"><b>{{ $app->type_label }}</b></a></td>
+                    <td class="small">{{ $app->submitted_at?->format('d.m.Y H:i') ?? '—' }}</td>
+                    <td><span class="badge {{ $app->status === 'sonuclandi' ? 'ok' : 'warn' }}">{{ $app->status === 'taslak' ? 'Düzeltme için geri açıldı' : (\App\Models\Student::APPLICATION_STATUSES[$app->status] ?? $app->status) }}</span></td>
+                    <td class="num">{{ $app->transcript_count }}</td>
+                    <td class="num">{{ $app->documents_count }}</td>
+                    <td class="small">
+                        @if ($app->isPrep())
+                            {{ $app->decision ? \App\Models\ExemptionApplication::DECISIONS[$app->decision] : '—' }}
+                        @elseif ($file)
+                            <a href="{{ route('files.show', $file) }}">Dosya #{{ $file->id }}</a> · {{ $file->accepted_items_count }}/{{ $file->items_count }} kabul · {{ (float) $file->exempt_ects }} AKTS
+                        @else
+                            —
+                        @endif
+                    </td>
+                    <td class="small">@if ($app->objected_at)<span class="badge {{ $app->objection_responded_at ? 'ok' : 'bad' }}">{{ $app->objection_responded_at ? 'cevaplandı' : 'cevap bekliyor' }}</span>@endif</td>
+                    <td><a class="btn small light" href="{{ route('applications.show', $app) }}">Aç</a></td>
+                </tr>
+            @endforeach
+        </table>
+    @endif
 </div>
 
 @if ($catalogPrograms->isNotEmpty())
@@ -125,28 +127,12 @@
 @endif
 
 <div class="card table-wrap">
-    <div class="card-head">
-        <div><h2>Öğrencinin dersleri ve eşleştirmeleri</h2><div class="sub">{{ $student->transcript->count() }} ders · {{ $student->transcript->where('passed', true)->count() }} başarılı · {{ $requests->count() }} eşleştirilmiş — salt okunur</div></div>
-        <form method="POST" action="{{ route('transcript.reconvert', $student) }}">@csrf<button class="small light" title="Ayarlar'daki not dönüşümü değiştiyse"><x-icon name="refresh" :size="13" /> Notları yeniden çevir</button></form>
-    </div>
+    <h2>İşlem geçmişi</h2>
     <table>
-        <tr><th>Kurum / bölüm</th><th>Kod</th><th>Ders</th><th class="num">Kr</th><th class="num">AKTS</th><th>Not</th><th>AÜ harf</th><th>Talep edilen AÜ dersi</th></tr>
-        @forelse ($student->transcript as $course)
-            <tr @class(['st-ret' => ! $course->passed])>
-                <td class="small">{{ $course->institution }}<div class="muted">{{ $course->department }}</div></td>
-                <td>{{ $course->code }}</td>
-                <td>{{ $course->name }}
-                    @if ($course->catalog_course_id || $course->source_course_id)<span class="badge ok">liste</span>@else<span class="badge warn">beyan</span>@endif
-                    @if ($course->content)<details class="small"><summary>içerik</summary>{{ $course->content }}</details>@endif
-                </td>
-                <td class="num">{{ $course->credit }}</td>
-                <td class="num">{{ $course->ects }}</td>
-                <td>{{ $course->grade_raw }}</td>
-                <td><b>{{ $course->letter ?? '?' }}</b> @if (in_array($course->letter, ['DC', 'DD'], true))<span class="badge warn">koşullu</span>@endif</td>
-                <td class="small">{{ $course->requestedCourse?->label ?? '—' }}</td>
-            </tr>
+        @forelse ($logs as $log)
+            <tr><td class="small" style="width:130px">{{ $log->created_at->format('d.m.Y H:i') }}</td><td class="small" style="width:180px">{{ $log->user ? ($log->user->isStudent() ? 'Öğrenci' : $log->user->display_name) : 'Sistem' }}</td><td class="small">{{ $log->description }}</td></tr>
         @empty
-            <tr><td colspan="8" class="muted">Öğrenci henüz ders girmedi.</td></tr>
+            <tr><td class="muted small">Kayıt yok.</td></tr>
         @endforelse
     </table>
 </div>

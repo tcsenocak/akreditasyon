@@ -32,6 +32,7 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'must_change_password' => 'boolean',
+            'kvkk_accepted_at' => 'datetime',
         ];
     }
 
@@ -40,9 +41,38 @@ class User extends Authenticatable
         return $this->belongsTo(Student::class);
     }
 
+    /** Komisyon rolleri: başkan (aynı zamanda sistem yöneticisi) ve üye. */
+    public const COMMISSION_ROLES = [
+        'admin' => 'Komisyon başkanı (yönetici)',
+        'commission' => 'Komisyon üyesi',
+    ];
+
+    /** Komisyon başkanı yalnız öğretim üyesi olabilir. */
+    public const TITLES = [
+        'Prof. Dr.' => true,
+        'Doç. Dr.' => true,
+        'Dr. Öğr. Üyesi' => true,
+        'Öğr. Gör. Dr.' => false,
+        'Öğr. Gör.' => false,
+        'Arş. Gör. Dr.' => false,
+        'Arş. Gör.' => false,
+    ];
+
+    /** Komisyon başkanı: kesin karar, kullanıcı yönetimi, ayarlar ve sınav modülü. */
     public function isAdmin(): bool
     {
         return $this->role === 'admin';
+    }
+
+    /** Muafiyet işlerini yürüten komisyon (başkan ya da üye). */
+    public function isCommission(): bool
+    {
+        return in_array($this->role, ['admin', 'commission'], true);
+    }
+
+    public function getDisplayNameAttribute(): string
+    {
+        return trim(($this->title ? $this->title.' ' : '').$this->name);
     }
 
     public function isStudent(): bool

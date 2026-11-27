@@ -71,7 +71,7 @@ class SinavHizliSinavTest extends TestCase
             ->assertSee('2 öğrenci', false)->assertSee('value="MUH104"', false)->assertSee('value="Malzeme Bilimi"', false);
 
         $this->post(route('sinav.admin.exams.store'), $this->examFields(['code' => 'MUH104', 'course_name' => 'Malzeme Bilimi', 'group_name' => 'A']))
-            ->assertSessionHas('error', 'Öğrencilerin sınavı görebilmesi için bir PIN belirleyin (4-8 rakam).');
+            ->assertSessionHas('error', 'Öğrencilerin sınavı görebilmesi için bir PIN belirleyin (6-8 rakam).');
         $this->assertSame(0, Course::query()->count());
 
         $response = $this->post(route('sinav.admin.exams.store'), $this->examFields(['code' => 'MUH104', 'course_name' => 'Malzeme Bilimi', 'group_name' => 'A', 'pin' => '482913']));

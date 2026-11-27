@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Http\Controllers\Sinav\StudentController;
 use App\Models\Sinav\AccSection;
 use App\Models\Sinav\Course;
 use App\Models\Sinav\Enrollment;
@@ -126,10 +127,61 @@ class SinavPinVeHocaTest extends TestCase
             ->assertSessionHas('error', 'Çok fazla hatalı deneme yapıldı. Lütfen 15 dakika sonra tekrar deneyin.');
     }
 
+    public function test_sinifca_pin_tahmini_grubu_gecici_kilitler(): void
+    {
+        $this->setPin('MUH104', '482913');
+        auth()->logout();
+        $key = 'sinav-login-group:'.$this->courses['MUH104']['group']->id;
+        // Sınıftaki farklı numaralarla yapılan denemeler numara başına sınırı aşsa da grup sınırına takılır
+        for ($i = 0; $i < 39; $i++) {
+            RateLimiter::hit($key, 3600);
+        }
+        $this->login('111222')->assertSessionHas('error', StudentController::GROUP_LOCKED);
+        $this->login('482913')->assertSessionHas('error', StudentController::GROUP_LOCKED);
+        $this->get(route('sinav.home'))->assertDontSee('MUH104');
+        $this->assertDatabaseHas('sinav_audit_logs', ['action' => 'group.pin_lock', 'result' => 'blocked']);
+
+        RateLimiter::clear($key);
+        RateLimiter::clear('sinav-login-no:220101001');
+        $this->login('482913')->assertSessionHasNoErrors();
+        $this->get(route('sinav.home'))->assertSee('MUH104');
+    }
+
+    public function test_pin_oturumu_ogrenciyi_sistemin_icine_sokmaz(): void
+    {
+        $this->setPin('MUH104', '482913');
+        $this->setPin('FIZ101', '573086');
+        auth()->logout();
+        $this->login('482913')->assertRedirect(route('sinav.home'));
+        $this->assertGuest();
+
+        // Öğrenci yalnız kendi yayınını görür; sayfada yönetim paneline bağlantı yoktur
+        $this->get(route('sinav.home'))->assertOk()->assertDontSee('yonetim', false)->assertDontSee('Yönetici girişi');
+        $this->get(route('sinav.exam', $this->courses['MUH104']['release']->id))->assertOk()->assertDontSee('yonetim', false);
+        $this->get(route('sinav.file', $this->courses['MUH104']['file']->id))->assertOk();
+
+        // PIN'ini girmediği dersin yayını ve dosyası kapalıdır
+        $this->get(route('sinav.exam', $this->courses['FIZ101']['release']->id))->assertRedirect(route('sinav.home'));
+        $this->get(route('sinav.file', $this->courses['FIZ101']['file']->id))->assertForbidden();
+        $this->get(route('sinav.file', 999999))->assertForbidden();
+
+        // Yönetim paneli, özgün dosyalar ve sistemin diğer bölümleri PIN oturumuyla açılmaz
+        foreach ([
+            route('sinav.admin.dashboard'), route('sinav.admin.exams'), route('sinav.admin.keys'), route('sinav.admin.students'),
+            route('sinav.admin.groups'), route('sinav.admin.acc'), route('sinav.admin.files.show', $this->courses['MUH104']['file']->exam_file_id),
+            route('dashboard'), route('students.index'), route('applications.index'), route('files.index'), route('portal.home'), route('portal.password'),
+        ] as $url) {
+            $this->get($url)->assertRedirect(route('login'));
+        }
+        $this->post(route('sinav.admin.groups.pin', $this->courses['MUH104']['group']), ['pin' => '654987'])->assertRedirect(route('login'));
+        $this->post(route('sinav.admin.chunk'))->assertRedirect(route('login'));
+        $this->assertSame('482913', $this->courses['MUH104']['group']->fresh()->pin());
+    }
+
     public function test_pin_kurallari(): void
     {
         $group = $this->courses['MUH104']['group'];
-        foreach (['1111', '1234', '98765', '12a4', '123'] as $weak) {
+        foreach (['1111', '1234', '98765', '12a4', '123', '4829', '48291', '111111', '123456'] as $weak) {
             $this->actingAs($this->commission)->post(route('sinav.admin.groups.pin', $group), ['pin' => $weak])->assertSessionHas('error');
         }
         $this->post(route('sinav.admin.groups.pin', $group), ['pin' => ''])->assertSessionHas('success');

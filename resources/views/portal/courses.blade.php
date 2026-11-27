@@ -1,5 +1,5 @@
 @extends('layouts.app')
-@section('title', 'Muafiyet başvurum')
+@section('title', 'Başvuru Düzenle')
 @section('content')
 @php
     $editable = $student->isEditableByStudent();
@@ -13,12 +13,50 @@
         'semester' => $t->semester, 'common' => in_array($t->common_group, ['AIIT', 'TD', 'YD', 'ISG'], true),
     ]]);
     $missing = collect($checklist)->where('required', true)->where('done', false);
+    $summer = $application->isSummer();
+    $prep = $application->isPrep();
 @endphp
 <div class="page-head">
-    <div><h1>Muafiyet Başvurum</h1><div class="sub">Tek sayfada dört adım: <b>1.</b> aldığınız dersleri girin, <b>2.</b> öğretim planınızdan muaf olmak istediğiniz dersleri eşleştirin, <b>3.</b> dilekçe ve belgelerinizi yükleyin, <b>4.</b> kaydedip gönderin. Karar komisyonundur.</div></div>
+    <div><h1>Başvuru Düzenle <span class="badge {{ $summer ? 'warn' : '' }}" style="vertical-align:middle">{{ $application->type_label }}</span></h1>
+        <div class="sub">
+            @if ($prep)
+                Hazırlık sınıfından muaf olmak için: <b>1.</b> dil sınavı bilgilerinizi girin, <b>2.</b> dilekçe ve sonuç belgenizi yükleyin, <b>3.</b> gönderin.
+            @elseif ($summer)
+                Yaz okulu ön onayı: <b>1.</b> yaz okulunda alacağınız dersleri girin, <b>2.</b> karşılığı olan AÜ derslerini seçin (toplam en fazla {{ rtrim(rtrim(number_format($summerMax, 1, ',', ''), '0'), ',') }} AKTS), <b>3.</b> dilekçe ve ders içeriklerini yükleyin, <b>4.</b> gönderin.
+            @else
+                Tek sayfada dört adım: <b>1.</b> aldığınız dersleri girin, <b>2.</b> öğretim planınızdan muaf olmak istediğiniz dersleri eşleştirin, <b>3.</b> dilekçe ve belgelerinizi yükleyin, <b>4.</b> kaydedip gönderin. Karar komisyonundur.
+            @endif
+            Başvuru türünü <a href="{{ route('portal.home') }}#basvuru-turu">başvuru özetinden</a> değiştirebilirsiniz.
+        </div>
+    </div>
 </div>
 @include('portal._status')
+@if ($application->return_note && $student->application_status === 'taslak')
+    <div class="alert warn" style="white-space:normal"><b>Komisyon başvurunuzu düzeltmeniz için geri açtı{{ $application->returned_at ? ' ('.$application->returned_at->format('d.m.Y').')' : '' }}.</b><br>Komisyonun notu: {{ $application->return_note }}</div>
+@endif
+@if ($editable && ! $window['open'])
+    <div class="alert warn" style="white-space:normal">{{ $window['message'] }} Bilgilerinizi şimdiden girip kaydedebilirsiniz; gönderim alım açılınca yapılabilir.</div>
+@endif
+@if ($errors->has('items'))
+    <div class="alert bad" style="white-space:normal">{{ $errors->first('items') }}</div>
+@endif
 
+
+@if ($prep)
+<form method="POST" action="{{ route('portal.prep') }}" id="prep-form" class="card">
+    @csrf @method('PUT')
+    <div class="card-head"><div><h2>1. Dil sınavı</h2><div class="sub">Geçerliliği kabul edilen bir yabancı dil sınavından (YDS, YÖKDİL, TOEFL iBT, PTE vb.) aldığınız puan. Karar komisyonundur; puanın yeterli olup olmadığı yönetmeliğe göre değerlendirilir.</div></div></div>
+    <fieldset @disabled(! $editable) style="border:0;padding:0;margin:0">
+        <div class="form-grid">
+            <div><label for="language_exam">Sınav</label><input id="language_exam" name="language_exam" list="sinavlar" maxlength="60" required value="{{ old('language_exam', $application->language_exam) }}" placeholder="ör. YDS"></div>
+            <div><label for="language_score">Puan</label><input id="language_score" name="language_score" type="number" step="0.01" min="0" max="120" required value="{{ old('language_score', $application->language_score) }}"></div>
+            <div><label for="language_exam_date">Sınav tarihi</label><input id="language_exam_date" name="language_exam_date" type="date" value="{{ old('language_exam_date', $application->language_exam_date?->format('Y-m-d')) }}"></div>
+        </div>
+        <datalist id="sinavlar"><option value="YDS"><option value="e-YDS"><option value="YÖKDİL"><option value="TOEFL iBT"><option value="PTE Academic"><option value="AÜ Yabancı Diller Yüksekokulu muafiyet sınavı"></datalist>
+    </fieldset>
+    <input type="hidden" name="gonder" value="0" id="prep-send">
+</form>
+@else
 <details class="card" @if (! $programInfo && $editable) open @endif>
     <summary>
         <b>Geldiğiniz kurum ve bölüm:</b>
@@ -99,17 +137,20 @@
                                 @php
                                     $elective = \App\Services\CurriculumTable::isElective($course);
                                     $pickable = $editable && in_array((int) $course->id, $targetIds, true);
+                                    $was = $blocked[(int) $course->id] ?? null;
                                 @endphp
-                                <tr class="obs-row" data-row="{{ $course->id }}">
+                                <tr @class(['obs-row', 'mx-blocked' => $was]) data-row="{{ $course->id }}" @if ($was) title="Önceki başvuruda talep edildi ({{ $was['status'] }}); yeniden istenemez" @endif>
                                     <td>
-                                        @if ($pickable)
+                                        @if ($was)
+                                            <span class="mx-was" aria-label="Önceki başvuruda talep edildi">✓</span>
+                                        @elseif ($pickable)
                                             <button type="button" class="mx-add" data-add="{{ $course->id }}" title="Muaf olmak istediğim dersler listesine ekle" aria-label="{{ $course->name }} dersini listeye ekle">+</button>
                                         @else
                                             <span @class(['obs-type', 'sec' => $elective]) title="{{ $elective ? 'Seçmeli' : 'Zorunlu' }}">{{ $elective ? 'S' : 'Z' }}</span>
                                         @endif
                                     </td>
                                     <td class="mono small">{{ $course->code ?: '—' }}</td>
-                                    <td>{{ $course->name }}</td>
+                                    <td>{{ $course->name }}@if ($was) <span class="small muted">· önceki başvuru: {{ $was['status'] }}</span>@endif</td>
                                     <td class="num">{{ (float) $course->credit ?: '—' }}</td>
                                     <td class="num">{{ number_format((float) $course->ects, 1) }}</td>
                                 </tr>
@@ -123,6 +164,7 @@
 
     <section class="card">
         <div class="card-head"><div><h2>Muaf olmak istediğim dersler</h2><div class="sub">Her kart bir AÜ dersidir. Karşılığı olan aldığınız derse dokunun; birden çok ders seçebilirsiniz (ör. Matematik I + Matematik II → Matematik I). Önce AKTS'ye, yetmezse krediye bakılır.</div></div></div>
+        @if ($summer)<div class="mx-summer" id="mx-summer"></div>@endif
         <div id="mx-cards" class="mx-cards"></div>
         <p id="mx-empty" class="muted small" style="margin:0">Henüz ders seçmediniz. Yukarıdaki öğretim planından bir dersin yanındaki <span class="mx-add-demo">+</span> düğmesine basın.</p>
     </section>
@@ -131,12 +173,13 @@
     <div id="mx-deleted"></div>
     <input type="hidden" name="gonder" value="0" id="mx-send">
 </form>
+@endif
 
 @include('portal._documents')
 
 <section class="card mx-actions" id="mx-actions">
     <div>
-        <h2 style="margin-bottom:6px">4. Kaydet ve gönder</h2>
+        <h2 style="margin-bottom:6px">{{ $prep ? '3.' : '4.' }} Kaydet ve gönder</h2>
         <ul class="mx-checklist">
             @foreach ($checklist as $item)
                 <li @class(['ok' => $item['done'], 'opt' => ! $item['required']])>{{ $item['done'] ? '✓' : ($item['required'] ? '•' : '○') }} {{ $item['label'] }}{{ $item['required'] ? '' : ' (önerilir)' }}</li>
@@ -150,19 +193,30 @@
     </div>
     @if ($editable)
         <div class="row">
-            <button class="light" form="mx-form">Kaydet</button>
-            <button type="submit" form="mx-form" data-send>Kaydet ve gönder</button>
+            <button class="light" form="{{ $prep ? 'prep-form' : 'mx-form' }}">Kaydet</button>
+            <button type="submit" form="{{ $prep ? 'prep-form' : 'mx-form' }}" data-send @disabled(! $window['open']) @if (! $window['open']) title="{{ $window['message'] }}" @endif>Kaydet ve gönder</button>
         </div>
     @endif
 </section>
 
-@if ($editable)
+@if ($editable && $prep)
+<script>
+document.addEventListener('click', (e) => {
+    const send = e.target.closest('[data-send]');
+    if (!send) { return; }
+    if (!confirm('Başvurunuz komisyona gönderilecek. Gönderdikten sonra değişiklik yapamazsınız. Devam edilsin mi?')) { e.preventDefault(); return; }
+    document.getElementById('prep-send').value = '1';
+});
+</script>
+@endif
+@if ($editable && ! $prep)
 <template id="mx-row-tpl">
     @include('portal._exemption-row', ['row' => null])
 </template>
 <script>
 (function () {
     const targets = @json($mxTargets);
+    const summerMax = @json($summer ? $summerMax : null);
     const lines = document.getElementById('mx-lines');
     const cards = document.getElementById('mx-cards');
     const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
@@ -187,6 +241,12 @@
         if (!cards) { return; }
         open.sort((a, b) => ((targets[a].semester ?? 99) - (targets[b].semester ?? 99)) || String(targets[a].code).localeCompare(String(targets[b].code), 'tr'));
         cards.innerHTML = open.map(card).join('');
+        const sum = document.getElementById('mx-summer');
+        if (sum && summerMax !== null) {
+            const total = open.reduce((a, t) => a + Number(targets[t].ects || 0), 0);
+            sum.className = 'mx-summer alert ' + (total > summerMax ? 'bad' : 'info');
+            sum.textContent = 'Seçtiğiniz AÜ dersleri toplam ' + num(total) + ' AKTS (yaz okulunda en fazla ' + num(summerMax) + ' AKTS)' + (total > summerMax ? ' — sınır aşıldı, bazı dersleri çıkarın.' : '.');
+        }
         document.getElementById('mx-empty').hidden = open.length > 0;
         document.querySelectorAll('[data-add]').forEach((b) => {
             const on = open.includes(Number(b.dataset.add));
@@ -276,6 +336,7 @@
         }
         const send = e.target.closest('[data-send]');
         if (send) {
+            if (summerMax !== null && open.reduce((a, t) => a + Number(targets[t].ects || 0), 0) > summerMax) { alert('Yaz okulunda en fazla ' + num(summerMax) + ' AKTS ders alınabilir.'); e.preventDefault(); return; }
             if (!confirm('Dersleriniz ve eşleştirmeleriniz kaydedilip başvurunuz komisyona gönderilecek. Gönderdikten sonra değişiklik yapamazsınız. Devam edilsin mi?')) { e.preventDefault(); return; }
             document.getElementById('mx-send').value = '1';
         }

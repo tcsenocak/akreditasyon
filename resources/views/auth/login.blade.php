@@ -18,5 +18,5 @@
         <p class="small">Hesabınız yok mu? <a href="{{ route('register') }}">Hesap oluşturun</a></p>
     @endif
 </div>
-<p class="small muted" style="text-align:center">v1.0 · © {{ now()->year }} ATABAUM</p>
+<p class="small muted" style="text-align:center">v1.0 · Atatürk Üniversitesi Mühendislik Fakültesi</p>
 @endsection

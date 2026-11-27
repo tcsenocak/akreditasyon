@@ -6,7 +6,6 @@ use App\Http\Controllers\Sinav\StudentController;
 use App\Models\Sinav\AccFile;
 use App\Models\Sinav\AccOutput;
 use App\Models\Sinav\AccSection;
-use App\Models\Sinav\AuditLog;
 use App\Models\Sinav\Course;
 use App\Models\Sinav\Exam;
 use App\Models\Sinav\ExamFile;

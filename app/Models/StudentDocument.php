@@ -9,6 +9,16 @@ class StudentDocument extends Model
 {
     protected $guarded = [];
 
+    /**
+     * Yeni kayıt, öğrencinin güncel başvurusuna bağlanır.
+     */
+    protected static function booted(): void
+    {
+        static::creating(function (StudentDocument $model): void {
+            $model->application_id ??= Student::query()->whereKey($model->student_id)->value('current_application_id');
+        });
+    }
+
     /** Muafiyet Esasları Md. 5/2: dilekçe, not döküm belgesi ve onaylı ders içerikleri */
     public const TYPES = [
         'dilekce' => 'Muafiyet dilekçesi',
@@ -18,6 +28,11 @@ class StudentDocument extends Model
         'hazirlik' => 'Hazırlık sınıfı başarı belgesi',
         'diger' => 'Diğer',
     ];
+
+    public function application(): BelongsTo
+    {
+        return $this->belongsTo(ExemptionApplication::class, 'application_id');
+    }
 
     public function student(): BelongsTo
     {

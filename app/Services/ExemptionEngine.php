@@ -7,6 +7,7 @@ use App\Models\CurriculumCourse;
 use App\Models\Equivalence;
 use App\Models\ExemptionFile;
 use App\Models\ExemptionItem;
+use App\Models\Program;
 use App\Models\Student;
 use App\Models\TranscriptCourse;
 use Illuminate\Support\Collection;
@@ -242,17 +243,22 @@ class ExemptionEngine
      */
     public function buildFromRequests(ExemptionFile $file): array
     {
-        $file->loadMissing(['student.transcript', 'curriculum.courses.info']);
+        $file->loadMissing(['student', 'application', 'curriculum.courses.info', 'curriculum.program']);
         $student = $file->student;
+        $rows = $file->application_id
+            ? TranscriptCourse::query()->where('application_id', $file->application_id)->get()
+            : $student->transcript;
+        $summer = (bool) $file->application?->isSummer();
+        $trToEn = $this->isTurkishToEnglish($file);
 
-        return DB::transaction(function () use ($file, $student): array {
+        return DB::transaction(function () use ($file, $student, $rows, $summer, $trToEn): array {
             $file->items()->where('status', 'oneri')->delete();
             $kept = $file->items()->get();
             $decided = $kept->pluck('curriculum_course_id')->all();
             $targets = $file->curriculum->courses->keyBy('id');
             $created = 0;
 
-            $requests = $student->transcript->whereNotNull('requested_course_id')->groupBy('requested_course_id');
+            $requests = $rows->whereNotNull('requested_course_id')->groupBy('requested_course_id');
             foreach ($requests as $targetId => $sources) {
                 $target = $targets->get((int) $targetId);
                 if (! $target || in_array($target->id, $decided, true)) {
@@ -273,8 +279,13 @@ class ExemptionEngine
                 if ($sources->count() > 1) {
                     $reasons[] = $sources->count().' ders birlikte';
                 }
-                if ($sources->contains(fn (TranscriptCourse $s) => ! $s->passed)) {
+                if ($summer) {
+                    $reasons[] = 'Yaz okulu ön onayı: ders henüz alınmadı, not yaz okulundan sonra işlenir';
+                } elseif ($sources->contains(fn (TranscriptCourse $s) => ! $s->passed)) {
                     $reasons[] = 'Kaynak derslerden biri başarısız — muafiyete esas alınamaz';
+                }
+                if ($trToEn && ! $common) {
+                    $reasons[] = 'Türkçe programdan İngilizce programa: alan dersiyse muafiyet verilemez (temel dersler kabul edilebilir)';
                 }
                 if ($this->inPool($sources->all(), $target, $student->previous_institution, $file->curriculum->program_id)) {
                     $reasons[] = 'Eşdeğerlik havuzunda önceki kabul kararı var';
@@ -285,26 +296,14 @@ class ExemptionEngine
 
                 $proposal = $this->proposal($target, $sources->all(), 'ogrenci', round($nameScore, 3), implode('; ', $reasons) ?: null, $common, 'oneri');
                 $proposal['content_score'] = $content;
-                if ($sources->contains(fn (TranscriptCourse $s) => ! $s->passed)) {
+                if (! $summer && $sources->contains(fn (TranscriptCourse $s) => ! $s->passed)) {
                     $proposal['ects_ok'] = false;
                 }
                 $this->store($file, $proposal);
                 $created++;
             }
 
-            // Öğrencinin beyan ettiği yabancı dil durumu (belgesi komisyonca kontrol edilir)
-            $ydsOk = ($student->yds_score ?? 0) >= config('intibak.yds_min_score');
-            if ($student->prep_completed || $ydsOk) {
-                $taken = $file->items()->pluck('curriculum_course_id')->all();
-                foreach ($targets->filter(fn (CurriculumCourse $t) => $t->common_group === 'YD' && ! in_array($t->id, $taken, true)) as $target) {
-                    $this->store($file, $this->proposal(
-                        $target, [], $student->prep_completed ? 'hazirlik' : 'yds', 1.0,
-                        $student->prep_completed ? 'Öğrenci beyanı: hazırlık başarılı — belgeyi kontrol edin' : 'Öğrenci beyanı: '.($student->yds_exam ?: 'YDS').' '.$student->yds_score.' — belgeyi kontrol edin',
-                        true, 'oneri', 'CC',
-                    ));
-                    $created++;
-                }
-            }
+            // Yabancı dil derslerine (YD) yalnız öğrenci talep ettiyse satır açılır; beyanı dosyada not olarak gösterilir.
 
             // Komisyonun yaptığı temel bilgisayar muafiyet sınavı (Md. 6/6)
             $taken = $file->items()->pluck('curriculum_course_id')->all();
@@ -325,6 +324,41 @@ class ExemptionEngine
 
             return ['created' => $created, 'kept' => $kept->count()];
         });
+    }
+
+    /**
+     * Öğrencinin yabancı dil beyanı (hazırlık başarısı / YDS); komisyonun dikkatine, talep satırı açmaz.
+     */
+    public function languageNote(Student $student): ?string
+    {
+        $parts = [];
+        if ($student->prep_completed) {
+            $parts[] = 'hazırlık sınıfını başarıyla tamamladığını';
+        }
+        if ($student->yds_score) {
+            $parts[] = ($student->yds_exam ?: 'YDS').' puanının '.$student->yds_score.' olduğunu';
+        }
+
+        return $parts === [] ? null : 'Öğrenci '.implode(' ve ', $parts).' beyan etti. Yabancı dil derslerini talep etmediyse dosyaya eklenmedi.';
+    }
+
+    /**
+     * Öğrenci Türkçe bir programdan İngilizce programa mı geliyor? Kaynak program AÜ programıysa dili bilinir;
+     * değilse program adında İngilizce ibaresi yoksa Türkçe sayılır.
+     */
+    public function isTurkishToEnglish(ExemptionFile $file): bool
+    {
+        $file->loadMissing(['student', 'curriculum.program']);
+        if (strtoupper((string) $file->curriculum->program?->language) !== 'EN') {
+            return false;
+        }
+        $student = $file->student;
+        if (str_starts_with((string) $student->source_program_key, 'au:')) {
+            return strtoupper((string) Program::query()->whereKey((int) substr($student->source_program_key, 3))->value('language')) !== 'EN';
+        }
+        $name = mb_strtolower((string) $student->previous_program, 'UTF-8');
+
+        return ! str_contains($name, 'ingilizce') && ! str_contains($name, 'english') && ! str_contains($name, '(en)');
     }
 
     /**

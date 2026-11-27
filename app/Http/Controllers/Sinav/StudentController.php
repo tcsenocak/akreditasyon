@@ -34,6 +34,11 @@ class StudentController extends BaseController
 
     const TOO_MANY = 'Çok fazla hatalı deneme yapıldı. Lütfen 15 dakika sonra tekrar deneyin.';
 
+    /** Bir grubun PIN'ine (farklı numaralarla da olsa) bir saatte yapılabilecek hatalı deneme sayısı. */
+    const GROUP_ATTEMPTS = 40;
+
+    const GROUP_LOCKED = 'Bu derse çok fazla hatalı PIN denemesi yapıldı; giriş geçici olarak kapatıldı. Bir saat sonra tekrar deneyin ya da dersin öğretim elemanına haber verin.';
+
     /** @return array<string, string> */
     private function config(): array
     {
@@ -165,8 +170,9 @@ class StudentController extends BaseController
         $matched = $student ? $this->groupsMatchingPin($student, $pin) : collect();
         if ($matched->isEmpty()) {
             RateLimiter::hit($numberKey, 900);
+            $locked = $student !== null && $this->recordGroupFailure($student);
 
-            return back()->withInput($request->only('student_no'))->with('error', self::LOGIN_FAILED);
+            return back()->withInput($request->only('student_no'))->with('error', $locked ? self::GROUP_LOCKED : self::LOGIN_FAILED);
         }
         RateLimiter::clear($numberKey);
 
@@ -199,8 +205,9 @@ class StudentController extends BaseController
         $matched = preg_match('/^\d{4,8}$/', $pin) ? $this->groupsMatchingPin($student, $pin) : collect();
         if ($matched->isEmpty()) {
             RateLimiter::hit($numberKey, 900);
+            $locked = $this->recordGroupFailure($student);
 
-            return back()->with('error', 'Bu PIN, kayıtlı olduğunuz derslerden hiçbirine ait değil.');
+            return back()->with('error', $locked ? self::GROUP_LOCKED : 'Bu PIN, kayıtlı olduğunuz derslerden hiçbirine ait değil.');
         }
         $session = session('sinav_student');
         foreach ($matched as $group) {
@@ -220,8 +227,34 @@ class StudentController extends BaseController
     {
         $groupIds = Enrollment::query()->where('student_id', $student->id)->pluck('group_id');
 
+        // Tahmin saldırısı altındaki grup, süre dolana kadar doğru PIN'le de açılmaz.
         return Group::query()->whereIn('id', $groupIds)->whereNotNull('pin_encrypted')->get()
+            ->reject(fn (Group $group): bool => RateLimiter::tooManyAttempts(self::groupKey($group->id), self::GROUP_ATTEMPTS))
             ->filter(fn (Group $group): bool => $group->pinMatches($pin))->values();
+    }
+
+    private static function groupKey(int|string $groupId): string
+    {
+        return 'sinav-login-group:'.$groupId;
+    }
+
+    /**
+     * Hatalı denemeyi öğrencinin PIN'li gruplarına da yazar. Grup PIN'i sınıfça ortak olduğundan, sınıftaki
+     * numaralar sırayla denenerek numara başına sınırın aşılması böylece önlenir. Grup kilitliyse true döner.
+     */
+    private function recordGroupFailure(Student $student): bool
+    {
+        $locked = false;
+        $groupIds = Enrollment::query()->where('student_id', $student->id)->pluck('group_id');
+        foreach (Group::query()->whereIn('id', $groupIds)->whereNotNull('pin_encrypted')->pluck('id') as $groupId) {
+            $key = self::groupKey($groupId);
+            if (RateLimiter::hit($key, 3600) === self::GROUP_ATTEMPTS) {
+                Util::log('group.pin_lock', 'group', $groupId, 'blocked', self::GROUP_ATTEMPTS.' hatalı PIN denemesi; giriş 1 saat kapatıldı');
+            }
+            $locked = $locked || RateLimiter::tooManyAttempts($key, self::GROUP_ATTEMPTS);
+        }
+
+        return $locked;
     }
 
     public function logout(Request $request): RedirectResponse
